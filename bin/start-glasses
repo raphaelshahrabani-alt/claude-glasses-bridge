@@ -1,0 +1,70 @@
+#!/bin/bash
+# Starts everything the glasses need, each in its own Terminal window:
+# VisionClaw's gateway, its voice worker, and a Claude Code session with the
+# glasses channel. Pieces that are already running are left alone.
+#
+#   start-glasses [project-folder]     (default: the current folder)
+#
+# Voice answers are only as fast as the model behind them, so Claude Code
+# starts on a quick model at low effort. Override with GLASSES_MODEL,
+# GLASSES_EFFORT and GLASSES_PERMISSION_MODE.
+set -euo pipefail
+
+visionclaw="${VISIONCLAW_DIR:-$HOME/VisionClaw}"
+project="$(cd "${1:-$PWD}" && pwd)"
+model="${GLASSES_MODEL:-sonnet}"
+effort="${GLASSES_EFFORT:-low}"
+permission_mode="${GLASSES_PERMISSION_MODE:-auto}"
+bridge_port="${GLASSES_PORT:-8790}"
+
+die() {
+  echo "start-glasses: $*" >&2
+  exit 1
+}
+
+listening() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+# New Terminal window titled $1 running the shell command $2. Both travel as
+# arguments, so nothing in them is parsed as AppleScript.
+open_window() {
+  osascript - "$1" "$2" >/dev/null <<'OSA'
+on run argv
+  tell application "Terminal"
+    activate
+    set newTab to do script (item 2 of argv)
+    set custom title of newTab to (item 1 of argv)
+  end tell
+end run
+OSA
+}
+
+[[ -d "$visionclaw/gateway" ]] || die "no VisionClaw checkout at $visionclaw (set VISIONCLAW_DIR)"
+[[ -x "$visionclaw/agent/start.sh" ]] || die "missing $visionclaw/agent/start.sh (see integrations/visionclaw/IPHONE.md, step 5)"
+command -v claude >/dev/null || die "claude is not on your PATH"
+
+if listening 8788; then
+  echo "gateway: already running"
+else
+  open_window "glasses: gateway" "$(printf 'cd %q && npm run dev' "$visionclaw/gateway")"
+  echo "gateway: started"
+fi
+
+if pgrep -f "main.py start" >/dev/null; then
+  echo "worker:  already running"
+else
+  # CLAUDE_CODE_ONLY hides VisionClaw's execute and browse tools, which need
+  # keys this setup doesn't have; caffeinate keeps the Mac awake while it runs.
+  open_window "glasses: worker" "$(printf 'CLAUDE_CODE_ONLY=1 caffeinate -dims %q' "$visionclaw/agent/start.sh")"
+  echo "worker:  started (keeps the Mac awake while it runs)"
+fi
+
+if listening "$bridge_port"; then
+  echo "claude:  a session with the glasses channel is already running"
+else
+  open_window "glasses: claude" "$(printf 'cd %q && claude --dangerously-load-development-channels server:glasses --model %q --effort %q --permission-mode %q' \
+    "$project" "$model" "$effort" "$permission_mode")"
+  echo "claude:  started in $project ($model, effort $effort, $permission_mode permissions)"
+  echo "         In its window, choose \"I am using this for local development\"."
+fi

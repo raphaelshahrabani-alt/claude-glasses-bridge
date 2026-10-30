@@ -56,6 +56,12 @@ bun run talk --events              # watch everything crossing the bridge
 { "permissions": { "allow": ["mcp__glasses__reply"] } }
 ```
 
+## Starting everything (VisionClaw)
+
+`bin/start-glasses [project-folder]` opens VisionClaw's gateway, its voice worker and a Claude Code session with the glasses channel, each in its own Terminal window, and skips any that are already running. Claude Code starts on Sonnet at low effort with auto permissions, because voice answers are only as fast as the model behind them; `GLASSES_MODEL`, `GLASSES_EFFORT` and `GLASSES_PERMISSION_MODE` override that. See [IPHONE.md](integrations/visionclaw/IPHONE.md#every-time-after-setup).
+
+To see where time goes, compare the `chat …` and `reply …` timestamps in `~/.claude-glasses-bridge/bridge.log`: the gap is Claude Code's share. The rest is the voice model and the network.
+
 ## Configuration
 
 Set these with `-e` when you register the server, for example `claude mcp add glasses --scope user -e GLASSES_PERMISSION_RELAY=1 -- bun "$PWD/src/server.ts"`.

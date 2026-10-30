@@ -208,7 +208,24 @@ Ray-Ban Meta Gen 3 works (tested October 2026 with MetaWearablesDAT 0.9.0), even
 
 ## Every time after setup
 
-1. **gateway tab:** `cd ~/VisionClaw/gateway && npm run dev`
-2. **claude tab:** `claude --dangerously-load-development-channels server:glasses` in your project.
-3. **worker tab:** `~/VisionClaw/agent/start.sh`
-4. Keep the Mac awake while you're out with the glasses. Running `caffeinate -dims` in a spare tab does it.
+One command opens everything in its own Terminal window: the gateway, the voice worker (which also keeps the Mac awake), and Claude Code with the glasses channel. Pieces that are already running are left alone. Add a shortcut once:
+
+```bash
+echo "alias start-glasses='~/claude-glasses-bridge/bin/start-glasses'" >> ~/.zshrc
+```
+
+Then, in a new Terminal window:
+
+```bash
+start-glasses ~/path/to/your-project
+```
+
+In the Claude Code window, choose "I am using this for local development". Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
+
+`start-glasses` runs Claude Code on Sonnet at low effort with auto permissions, so answers come back quickly. Set `GLASSES_MODEL=opus`, `GLASSES_EFFORT=high` or `GLASSES_PERMISSION_MODE=manual` to change that. It also starts the worker with `CLAUDE_CODE_ONLY=1`, which drops VisionClaw's `execute` and `browse` tools. Those need keys this setup doesn't have, and the voice model wasted time trying them.
+
+**Updating from an earlier version of the patch:** reset the worker file and apply the new patch, then restart the worker:
+
+```bash
+cd ~/VisionClaw && git checkout agent/main.py && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch
+```

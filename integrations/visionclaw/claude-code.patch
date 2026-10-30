@@ -1,8 +1,8 @@
 diff --git a/agent/main.py b/agent/main.py
-index 5d3659e..4fe8beb 100644
+index 5d3659e..ae11a15 100644
 --- a/agent/main.py
 +++ b/agent/main.py
-@@ -365,6 +365,23 @@ BROWSE_KEEPALIVE_S = 90
+@@ -365,6 +365,36 @@ BROWSE_KEEPALIVE_S = 90
  # instruction blob for a voice model, not an answer, so never relay it as one.
  GATEWAY_DEFERRAL_PREFIX = "[task started]"
  
@@ -11,6 +11,11 @@ index 5d3659e..4fe8beb 100644
 +# not offered at all. The bridge speaks the same chat-completions contract as
 +# the gateway, including the GATEWAY_DEFERRAL_PREFIX for long tasks.
 +CLAUDE_CODE_URL = os.environ.get("CLAUDE_CODE_URL", "").rstrip("/")
++
++# For a gateway with no Anthropic or browser keys behind it: execute and browse
++# can then only fail, after the voice model has already promised a result, so
++# CLAUDE_CODE_ONLY=1 drops them and sends that work to Claude Code instead.
++CLAUDE_CODE_ONLY = bool(CLAUDE_CODE_URL) and os.environ.get("CLAUDE_CODE_ONLY") == "1"
 +
 +CLAUDE_CODE_INSTRUCTIONS = """
 +
@@ -23,10 +28,18 @@ index 5d3659e..4fe8beb 100644
 +short code, read it to them, wait for their answer, and pass their exact words back as a new
 +claude_code task, for example "yes k q r t x". Never answer an approval yourself."""
 +
++CLAUDE_CODE_ONLY_INSTRUCTIONS = """
++
++In this setup the execute and browse tools are not available; ignore what the instructions
++above say about them. Use claude_code for anything they would have done: actions, research
++that takes more than a quick lookup, and anything on the user's computer. For quick facts
++(weather, scores, opening hours, news, simple questions about the world) keep using
++quick_search, which answers in a couple of seconds."""
++
  _relay_tasks: set[asyncio.Task] = set()
  
  
-@@ -456,6 +473,47 @@ async def _drain_pending(user_id: str) -> list[str]:
+@@ -456,6 +486,47 @@ async def _drain_pending(user_id: str) -> list[str]:
          return []
  
  
@@ -74,7 +87,7 @@ index 5d3659e..4fe8beb 100644
  def _card_text(raw: str, limit: int) -> str:
      """Markdown-ish search prose -> plain card text."""
      text = re.sub(r"[*_`#]+", "", raw)
-@@ -845,6 +903,26 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
+@@ -845,6 +916,26 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
      return await _run_delegated(ctx, task, "execute", job)
  
  
@@ -101,20 +114,22 @@ index 5d3659e..4fe8beb 100644
  @function_tool
  async def browse(ctx: RunContext[Userdata], task: str) -> str:
      """The computer-use / shopping / browser agent: drives a real web browser on a live
-@@ -1245,8 +1323,10 @@ async def entrypoint(ctx: JobContext):
+@@ -1245,8 +1336,12 @@ async def entrypoint(ctx: JobContext):
  
      await session.start(
          agent=Agent(
 -            instructions=INSTRUCTIONS + (ASSISTIVE_INSTRUCTIONS if profile == "assistive" else ""),
 -            tools=[execute, browse, quick_search, show_card, save_note, recall_notes, delete_note],
 +            instructions=INSTRUCTIONS + (ASSISTIVE_INSTRUCTIONS if profile == "assistive" else "")
-+            + (CLAUDE_CODE_INSTRUCTIONS if CLAUDE_CODE_URL else ""),
-+            tools=[execute, browse, quick_search, show_card, save_note, recall_notes, delete_note]
++            + (CLAUDE_CODE_INSTRUCTIONS if CLAUDE_CODE_URL else "")
++            + (CLAUDE_CODE_ONLY_INSTRUCTIONS if CLAUDE_CODE_ONLY else ""),
++            tools=[t for t in [execute, browse] if not CLAUDE_CODE_ONLY]
++            + [quick_search, show_card, save_note, recall_notes, delete_note]
 +            + ([claude_code] if CLAUDE_CODE_URL else []),
          ),
          room=ctx.room,
          # Video is opt-in (RoomInputOptions.video_enabled defaults to False);
-@@ -1259,7 +1339,10 @@ async def entrypoint(ctx: JobContext):
+@@ -1259,7 +1354,10 @@ async def entrypoint(ctx: JobContext):
      # gateway; deliver them up front so a hangup never discards an answer.
      # Dead app connections ride the same opening beat: one brief mention,
      # then silence -- the fix lives in Settings -> Connected Apps.
