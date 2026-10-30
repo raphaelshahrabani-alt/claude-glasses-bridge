@@ -3,6 +3,7 @@ import type { Channel } from './channel.ts'
 import type { Config } from './config.ts'
 import { type Behavior, type BridgeEvent, type Hub, parseVerdict } from './hub.ts'
 import { saveImage } from './images.ts'
+import { log } from './log.ts'
 
 /** VisionClaw's voice worker treats a result with this prefix as "still running". */
 export const DEFERRAL =
@@ -16,11 +17,6 @@ export type AskResult =
 
 export interface BridgeState {
   claudeConnected: boolean
-}
-
-export function log(message: string): void {
-  // stdout is the MCP transport; anything printed there corrupts it
-  process.stderr.write(`[glasses] ${message}\n`)
 }
 
 function json(body: unknown, status = 200): Response {
@@ -125,7 +121,15 @@ export function createHandler(deps: { hub: Hub; channel: Channel; config: Config
       start(ctrl) {
         ctrl.enqueue(': connected\n\n')
         unsubscribe = hub.subscribe((event: BridgeEvent) => ctrl.enqueue(`data: ${JSON.stringify(event)}\n\n`))
-        ping = setInterval(() => ctrl.enqueue(': ping\n\n'), 20_000)
+        ping = setInterval(() => {
+          try {
+            ctrl.enqueue(': ping\n\n')
+          } catch {
+            // the stream closed without an abort; a throw here would be uncaught
+            unsubscribe()
+            clearInterval(ping)
+          }
+        }, 20_000)
         req.signal.addEventListener('abort', () => {
           unsubscribe()
           clearInterval(ping)

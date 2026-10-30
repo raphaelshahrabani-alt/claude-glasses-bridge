@@ -21,6 +21,7 @@ interface Note {
 class FakeClaudeCode {
   client = new Client({ name: 'fake-claude-code', version: '0.0.0' })
   base: string
+  dataDir = mkdtempSync(join(tmpdir(), 'glasses-test-'))
   private seen: Note[] = []
   private waiting: Array<{ method: string; resolve: (n: Note) => void }> = []
 
@@ -38,7 +39,7 @@ class FakeClaudeCode {
   }
 
   async start() {
-    const dataDir = mkdtempSync(join(tmpdir(), 'glasses-test-'))
+    const dataDir = this.dataDir
     await this.client.connect(
       new StdioClientTransport({
         command: process.execPath,
@@ -315,9 +316,13 @@ describe('bridge without permission relay', () => {
     expect((await cc.post('/permission', { request_id: 'abcde', behavior: 'allow' })).status).toBe(409)
   })
 
-  test('exits with Claude Code and frees the port', async () => {
+  test('exits with Claude Code, frees the port, and says why in bridge.log', async () => {
     await cc.client.close()
     await Bun.sleep(300)
     await expect(fetch(`${cc.base}/health`)).rejects.toThrow()
+    const lines = readFileSync(join(cc.dataDir, 'bridge.log'), 'utf8')
+    expect(lines).toContain('Claude Code connected (fake-claude-code 0.0.0)')
+    expect(lines).toContain('chat ')
+    expect(lines).toMatch(/exiting: (stdin ended|stdin closed|MCP connection closed)/)
   })
 })

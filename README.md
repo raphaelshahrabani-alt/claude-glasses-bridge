@@ -109,6 +109,13 @@ The bridge listens on `127.0.0.1` by default, so only processes on the same comp
 - **The token is the only gate.** It is checked in constant time. Rotate it by deleting `~/.claude-glasses-bridge/token` and restarting the session.
 - **Camera frames stay on disk** in `~/.claude-glasses-bridge/frames` (latest 100). Delete them whenever you like.
 
+## Troubleshooting
+
+- **Run `bun run talk` in a plain terminal, never in Claude Code's prompt.** If Claude runs it, Claude is stuck waiting on a command that is waiting for Claude.
+- **`/mcp` shows glasses as failed:** usually Bun isn't on the `PATH` Claude Code sees. Register it with the full path: `claude mcp add glasses --scope user -- "$HOME/.bun/bin/bun" "$PWD/src/server.ts"`.
+- **The server disconnects, or nothing arrives:** read `~/.claude-glasses-bridge/bridge.log`. It records every start, connection, message and exit, including the reason the bridge stopped. For Claude Code's side, start it with `--debug` and look in `~/.claude/debug/`.
+- **"could not listen on 127.0.0.1:8790":** another Claude Code session is already running the bridge. Each port can serve one session; quit the other, or set a different `GLASSES_PORT`.
+
 ## Development
 
 ```bash

@@ -32,6 +32,7 @@ if (args[0] === '--events') {
     console.error('usage: bun run talk [--image file.jpg] <what you would say>   |   bun run talk --events')
     process.exit(2)
   }
+  console.error(`sent; waiting for Claude (up to ${config.waitMs / 1000}s). If the Claude Code window asks to allow mcp__glasses__reply, approve it there.`)
   const res = await fetch(`${base}/message`, {
     method: 'POST',
     headers: { ...auth, 'Content-Type': 'application/json' },

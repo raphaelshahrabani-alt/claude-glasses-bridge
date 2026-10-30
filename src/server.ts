@@ -1,28 +1,53 @@
 #!/usr/bin/env bun
 // Claude Code spawns this over stdio as a channel. It also serves the HTTP API
 // that a phone app (or VisionClaw's voice worker) calls. See README.md.
+import { join } from 'node:path'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createChannel } from './channel.ts'
 import { loadConfig } from './config.ts'
-import { type BridgeState, createHandler, log } from './http.ts'
+import { type BridgeState, createHandler } from './http.ts'
 import { Hub } from './hub.ts'
+import { log, logToFile } from './log.ts'
 
 const config = loadConfig()
+logToFile(join(config.dataDir, 'bridge.log'))
+log(`starting: pid ${process.pid}, bun ${Bun.version}, started by ${parentCommand()}`)
+
+/** Every Claude Code process that loads this MCP config spawns a bridge; this says which one. */
+function parentCommand(): string {
+  try {
+    const out = Bun.spawnSync(['ps', '-o', 'command=', '-p', String(process.ppid)]).stdout.toString().trim()
+    return `pid ${process.ppid} (${out.slice(0, 200) || 'unknown'})`
+  } catch {
+    return `pid ${process.ppid}`
+  }
+}
+
 const hub = new Hub()
 const channel = createChannel(hub, { permissionRelay: config.permissionRelay })
 const state: BridgeState = { claudeConnected: false }
 
 channel.server.oninitialized = () => {
   state.claudeConnected = true
-  log('Claude Code connected')
+  const client = channel.server.getClientVersion()
+  log(`Claude Code connected (${client?.name ?? 'unknown client'} ${client?.version ?? ''})`.trim())
 }
+channel.server.onerror = err => log(`MCP error: ${err.stack ?? err.message}`)
 
 // When Claude Code exits, go with it; otherwise the HTTP listener would keep
-// the port held by an orphan and the next session couldn't bind it.
-const exit = () => process.exit(0)
-process.stdin.on('end', exit)
-process.stdin.on('close', exit)
-channel.server.onclose = exit
+// the port held by an orphan and the next session couldn't bind it. Every
+// way out is logged so a dropped connection can be traced in bridge.log.
+const exitOn = (reason: string) => () => {
+  log(`exiting: ${reason}`)
+  process.exit(0)
+}
+process.stdin.on('end', exitOn('stdin ended'))
+process.stdin.on('close', exitOn('stdin closed'))
+channel.server.onclose = exitOn('MCP connection closed')
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(signal, exitOn(`received ${signal}`))
+// Stay up on stray errors: one bad request shouldn't drop the channel.
+process.on('uncaughtException', err => log(`uncaught exception: ${err.stack ?? err}`))
+process.on('unhandledRejection', err => log(`unhandled rejection: ${err instanceof Error ? err.stack : err}`))
 
 await channel.server.connect(new StdioServerTransport())
 
@@ -36,7 +61,7 @@ try {
   })
 } catch (err) {
   log(`could not listen on ${config.host}:${config.port}: ${err instanceof Error ? err.message : err}`)
-  log('is another session already running the bridge? check with: lsof -i :' + config.port)
+  log(`is another Claude Code session already running the bridge? check with: lsof -i :${config.port}`)
   process.exit(1)
 }
 
