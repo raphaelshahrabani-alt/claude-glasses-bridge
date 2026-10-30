@@ -141,7 +141,7 @@ Wait for a line containing `registered worker`. If you also deployed VisionClaw'
    - Plug it into the Mac with a cable.
    - Turn on **Settings → Privacy & Security → Developer Mode**, and restart when asked. If the toggle isn't there, it appears after Xcode has seen the phone once.
 
-5. **Pin LiveKit to 2.18.0.** VisionClaw (last updated Oct 21, 2026) was built against LiveKit's Swift SDK 2.18.0. LiveKit 2.19.0 (Oct 27) changed APIs it uses, so Xcode's default "latest 2.x" fails to build with "Expression is 'async' but is not marked with 'await'" in `LiveKitSession.swift`. Editing the rule in Xcode's Package Dependencies tab didn't stick in testing: Xcode resolved LiveKit 2.0.0, whose WebRTC download now returns 404. Set the pin in the project file instead. Quit Xcode (⌘Q) first, then:
+5. **Pin LiveKit to 2.18.0.** VisionClaw (last updated Oct 21, 2026) was built against LiveKit's Swift SDK 2.18.0. LiveKit 2.19.0 (Oct 27) changed APIs it uses, so Xcode's default "latest 2.x" fails to build with "Expression is 'async' but is not marked with 'await'" in `LiveKitSession.swift`. You can set the rule in Xcode's Package Dependencies tab, but a leftover `Package.resolved` can keep the old pick: in testing it went on resolving LiveKit 2.0.0, whose WebRTC download now returns 404. The commands below set the pin in the project file and clear that lock file and the build cache, then resolve from the command line so you can see the result. Quit Xcode (⌘Q) first, then:
    ```bash
    cd ~/VisionClaw/samples/CameraAccess
    python3.12 - <<'PY'
