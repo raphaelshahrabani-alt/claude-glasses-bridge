@@ -142,9 +142,7 @@ Wait for a line containing `registered worker`. If you also deployed VisionClaw'
    - Click the blue **CameraAccess** project at the top left, then the **CameraAccess** target, then **Signing & Capabilities**.
    - **Team:** your Apple ID ("Personal Team").
    - **Bundle Identifier:** change it to something only you use, such as `com.yourname.visionclaw`.
-   - **If Xcode reports that your team doesn't support "Hotspot Configuration" or "Access WiFi Information":** a free Apple ID may not be allowed those capabilities. You have two options:
-     - Delete both capabilities with the **×** next to each. The iPhone-camera mode will still work, but streaming from the glasses may not, because the glasses SDK uses Wi-Fi for video.
-     - Join the Apple Developer Program ($99 a year) and keep them.
+   - **If Xcode reports that your team doesn't support "Hotspot Configuration" or "Access WiFi Information":** a free Apple ID isn't allowed those capabilities. Delete both with the **×** (trash icon) next to each. Tested on Ray-Ban Meta Gen 3 with a free Apple ID: the glasses camera still streams without them. Joining the Apple Developer Program ($99 a year) lets you keep them if your setup needs them.
 
 4. **Prepare the iPhone:**
    - Plug it into the Mac with a cable.
@@ -206,7 +204,7 @@ The **claude** tab should show `← glasses: …`, and you should hear the answe
    - *"Ask Claude what changed in my repo today."*
    - While looking at your screen: *"Ask Claude what this error means."*
 
-If the glasses never connect, check that your model is listed as supported in [Meta's toolkit docs](https://wearables.developer.meta.com/docs/develop/dat/getting-started-toolkit/). Newer models have appeared there later than in stores.
+Ray-Ban Meta Gen 3 works (tested October 2026 with MetaWearablesDAT 0.9.0), even though Meta's device list didn't name it yet. If your glasses never connect, check [Meta's toolkit docs](https://wearables.developer.meta.com/docs/develop/dat/getting-started-toolkit/) for your model.
 
 ## Every time after setup
 

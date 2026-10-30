@@ -135,4 +135,4 @@ This is v0.1, and some of it hasn't been run end to end:
 
 - **Tested:** the channel protocol, against an MCP client that follows Claude Code's [channels reference](https://code.claude.com/docs/en/channels-reference). The VisionClaw patch was also run against a live bridge.
 - **Not yet tested:** a live Claude Code session, and the full glasses → phone → LiveKit → bridge path.
-- **Your glasses model:** the Wearables Device Access Toolkit's published device list has lagged behind new hardware. Check [Meta's docs](https://wearables.developer.meta.com/docs/develop/dat/getting-started-toolkit/) for your model.
+- **Glasses:** Ray-Ban Meta Gen 3 streams through VisionClaw (MetaWearablesDAT 0.9.0), built with a free Apple ID. For other models, check [Meta's docs](https://wearables.developer.meta.com/docs/develop/dat/getting-started-toolkit/).
