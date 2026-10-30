@@ -141,11 +141,16 @@ Wait for a line containing `registered worker`. If you also deployed VisionClaw'
    - Plug it into the Mac with a cable.
    - Turn on **Settings → Privacy & Security → Developer Mode**, and restart when asked. If the toggle isn't there, it appears after Xcode has seen the phone once.
 
-5. **Run the app.** Pick your iPhone as the run destination at the top of Xcode and press **⌘R**.
+5. **Pin LiveKit to 2.18.0.** VisionClaw (last updated Oct 21, 2026) was built against LiveKit's Swift SDK 2.18.0. LiveKit 2.19.0 (Oct 27) changed APIs it uses, so Xcode's default "latest 2.x" fails to build with "Expression is 'async' but is not marked with 'await'" in `LiveKitSession.swift`. To pin it:
+   - Click the blue **CameraAccess** project, then **CameraAccess** under **PROJECT** (not TARGETS), then the **Package Dependencies** tab.
+   - Double-click **client-sdk-swift**, set the rule to **Exact Version** `2.18.0`, and click **Done**.
+   - Then run **Product → Clean Build Folder** (⇧⌘K).
+
+6. **Run the app.** Pick your iPhone as the run destination at the top of Xcode and press **⌘R**.
    - The first time, iOS blocks the app until you trust it: **Settings → General → VPN & Device Management** → your Apple ID → **Trust**. Then press ⌘R again.
    - With a free Apple ID, the app stops opening after 7 days; press ⌘R to reinstall it.
 
-6. **Unlock the app.** On the first screen, skip Google sign-in.
+7. **Unlock the app.** On the first screen, skip Google sign-in.
    - Open **"Have an access code or your own gateway?"**. The access code is the part of `GATEWAY_TOKENS` before `:me`; print it with `grep GATEWAY_TOKENS ~/VisionClaw/gateway/.env`.
    - Under **"Using your own gateway?"**, the URL should already be your Mac's. Submit.
    - When iOS asks to find devices on your local network, tap **Allow**.
