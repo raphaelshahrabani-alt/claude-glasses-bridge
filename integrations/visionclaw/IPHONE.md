@@ -89,15 +89,28 @@ pip install -r requirements.txt
 python main.py download-files
 ```
 
-Those install steps only need to run once. These next lines run every time you start the worker. Put your Gemini key in the first line:
+Those install steps only need to run once. Next, save a start script so you enter your Gemini key only once:
 
 ```bash
+cat > ~/VisionClaw/agent/start.sh <<'EOF'
+#!/bin/bash
+cd ~/VisionClaw/agent
+source .venv/bin/activate
 export GOOGLE_API_KEY=paste-gemini-key-here
 export $(grep -E '^(LIVEKIT_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET|GATEWAY_SERVICE_TOKEN)=' ~/VisionClaw/gateway/.env)
 export GATEWAY_URL=http://127.0.0.1:8788
 export CLAUDE_CODE_URL=http://127.0.0.1:8790
 export CLAUDE_CODE_TOKEN="$(cat ~/.claude-glasses-bridge/token)"
-python main.py start
+exec python main.py start
+EOF
+chmod +x ~/VisionClaw/agent/start.sh
+open -e ~/VisionClaw/agent/start.sh
+```
+
+Replace `paste-gemini-key-here` with your Gemini key (no quotes), save, and close TextEdit. Then start the worker:
+
+```bash
+~/VisionClaw/agent/start.sh
 ```
 
 Wait for a line containing `registered worker`. If you also deployed VisionClaw's worker to Fly at some point, stop that copy (`fly scale count 0` in `agent/`), or it may take your calls.
@@ -164,5 +177,5 @@ If the glasses never connect, check that your model is listed as supported in [M
 
 1. **gateway tab:** `cd ~/VisionClaw/gateway && npm run dev`
 2. **claude tab:** `claude --dangerously-load-development-channels server:glasses` in your project.
-3. **worker tab:** `cd ~/VisionClaw/agent && source .venv/bin/activate`, then the `export …` lines and `python main.py start` from step 5.
+3. **worker tab:** `~/VisionClaw/agent/start.sh`
 4. Keep the Mac awake while you're out with the glasses. Running `caffeinate -dims` in a spare tab does it.
