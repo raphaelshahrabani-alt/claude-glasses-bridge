@@ -11,17 +11,24 @@ import { log, logToFile } from './log.ts'
 
 const config = loadConfig()
 logToFile(join(config.dataDir, 'bridge.log'))
-log(`starting: pid ${process.pid}, bun ${Bun.version}, started by ${parentCommand()}`)
+const parent = parentCommand()
+log(`starting: pid ${process.pid}, bun ${Bun.version}, started by pid ${process.ppid} (${parent ?? 'unknown'})`)
 
 /** Every Claude Code process that loads this MCP config spawns a bridge; this says which one. */
-function parentCommand(): string {
+function parentCommand(): string | null {
   try {
-    const out = Bun.spawnSync(['ps', '-o', 'command=', '-p', String(process.ppid)]).stdout.toString().trim()
-    return `pid ${process.ppid} (${out.slice(0, 200) || 'unknown'})`
+    return Bun.spawnSync(['ps', '-o', 'command=', '-p', String(process.ppid)]).stdout.toString().trim().slice(0, 300) || null
   } catch {
-    return `pid ${process.ppid}`
+    return null
   }
 }
+
+// A user-scoped MCP server is spawned by every Claude Code process: other
+// sessions, background spares (`claude bg-spare`), Agent SDK runs. Only the
+// session started with a channels flag delivers our events, so only it may
+// hold the port; otherwise a spare that binds first would swallow every
+// message. If the parent can't be read, fall back to listening.
+const channelSession = parent === null || /--(dangerously-load-development-)?channels\b/.test(parent)
 
 const hub = new Hub()
 const channel = createChannel(hub, { permissionRelay: config.permissionRelay })
@@ -51,18 +58,22 @@ process.on('unhandledRejection', err => log(`unhandled rejection: ${err instance
 
 await channel.server.connect(new StdioServerTransport())
 
-try {
-  Bun.serve({
-    hostname: config.host,
-    port: config.port,
-    idleTimeout: 0, // requests wait minutes for Claude, and /events streams stay open
-    maxRequestBodySize: 16 * 1024 * 1024,
-    fetch: createHandler({ hub, channel, config, state }),
-  })
-} catch (err) {
-  log(`could not listen on ${config.host}:${config.port}: ${err instanceof Error ? err.message : err}`)
-  log(`is another Claude Code session already running the bridge? check with: lsof -i :${config.port}`)
-  process.exit(1)
-}
+if (config.listen === 'always' || channelSession) listen()
+else log('not listening: this Claude Code process was not started with channels enabled (set GLASSES_LISTEN=always to override)')
 
-log(`listening on http://${config.host}:${config.port} (permission relay ${config.permissionRelay ? 'on' : 'off'})`)
+function listen(): void {
+  try {
+    Bun.serve({
+      hostname: config.host,
+      port: config.port,
+      idleTimeout: 0, // requests wait minutes for Claude, and /events streams stay open
+      maxRequestBodySize: 16 * 1024 * 1024,
+      fetch: createHandler({ hub, channel, config, state }),
+    })
+  } catch (err) {
+    log(`could not listen on ${config.host}:${config.port}: ${err instanceof Error ? err.message : err}`)
+    log(`is another Claude Code session with channels already running the bridge? check with: lsof -i :${config.port}`)
+    process.exit(1)
+  }
+  log(`listening on http://${config.host}:${config.port} (permission relay ${config.permissionRelay ? 'on' : 'off'})`)
+}

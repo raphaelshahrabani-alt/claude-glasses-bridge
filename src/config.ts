@@ -12,6 +12,8 @@ export interface Config {
   /** How long an HTTP request holds open waiting for Claude's reply. */
   waitMs: number
   permissionRelay: boolean
+  /** "auto": only open the HTTP port when started by a session with --channels or the development flag. */
+  listen: 'auto' | 'always'
 }
 
 type Env = Record<string, string | undefined>
@@ -58,5 +60,6 @@ export function loadConfig(env: Env = process.env): Config {
     // a little before that and let the late reply go to /pending-notifications.
     waitMs: number(env.GLASSES_WAIT_S, 110, 'GLASSES_WAIT_S') * 1000,
     permissionRelay: env.GLASSES_PERMISSION_RELAY === '1',
+    listen: env.GLASSES_LISTEN === 'always' ? 'always' : 'auto',
   }
 }

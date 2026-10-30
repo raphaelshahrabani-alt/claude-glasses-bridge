@@ -28,6 +28,8 @@ class FakeClaudeCode {
   constructor(
     readonly port: number,
     private env: Record<string, string> = {},
+    // Claude Code's own command line, which the bridge reads to decide whether to open the port
+    private parentArgs = ['--dangerously-load-development-channels', 'server:glasses'],
   ) {
     this.base = `http://127.0.0.1:${port}`
     this.client.fallbackNotificationHandler = async n => {
@@ -38,12 +40,13 @@ class FakeClaudeCode {
     }
   }
 
-  async start() {
+  async start(expectListening = true) {
     const dataDir = this.dataDir
     await this.client.connect(
       new StdioClientTransport({
-        command: process.execPath,
-        args: [join(import.meta.dir, '..', 'src', 'server.ts')],
+        // a shell parent standing in for the claude process; "; exit" keeps sh from exec'ing away
+        command: 'sh',
+        args: ['-c', '"$0" "$1"; exit $?', process.execPath, join(import.meta.dir, '..', 'src', 'server.ts'), ...this.parentArgs],
         env: {
           PATH: process.env.PATH ?? '',
           HOME: dataDir,
@@ -56,6 +59,7 @@ class FakeClaudeCode {
         stderr: 'ignore',
       }),
     )
+    if (!expectListening) return
     for (let i = 0; i < 50; i++) {
       try {
         if ((await fetch(`${this.base}/health`)).ok) return
@@ -316,13 +320,37 @@ describe('bridge without permission relay', () => {
     expect((await cc.post('/permission', { request_id: 'abcde', behavior: 'allow' })).status).toBe(409)
   })
 
+  test('--channels counts as a channel session too', async () => {
+    const plugin = new FakeClaudeCode(18794, {}, ['--channels', 'plugin:glasses@local'])
+    await plugin.start()
+    expect((await fetch(`${plugin.base}/health`)).ok).toBe(true)
+    await plugin.client.close()
+  })
+
+  test('a Claude Code process without channels does not take the port', async () => {
+    const spare = new FakeClaudeCode(18793, {}, ['bg-spare', '--bg-spare'])
+    await spare.start(false)
+    expect((await spare.client.listTools()).tools.map(t => t.name)).toEqual(['reply'])
+    await Bun.sleep(200)
+    await expect(fetch(`${spare.base}/health`)).rejects.toThrow()
+    expect(readFileSync(join(spare.dataDir, 'bridge.log'), 'utf8')).toContain('not listening: this Claude Code process was not started with channels')
+    await spare.client.close()
+
+    const forced = new FakeClaudeCode(18793, { GLASSES_LISTEN: 'always' }, ['bg-spare', '--bg-spare'])
+    await forced.start()
+    expect((await fetch(`${forced.base}/health`)).ok).toBe(true)
+    await forced.client.close()
+  })
+
   test('exits with Claude Code, frees the port, and says why in bridge.log', async () => {
     await cc.client.close()
     await Bun.sleep(300)
     await expect(fetch(`${cc.base}/health`)).rejects.toThrow()
     const lines = readFileSync(join(cc.dataDir, 'bridge.log'), 'utf8')
+    expect(lines).toContain('--dangerously-load-development-channels server:glasses)')
     expect(lines).toContain('Claude Code connected (fake-claude-code 0.0.0)')
     expect(lines).toContain('chat ')
+    expect(lines).toContain('reply ')
     expect(lines).toMatch(/exiting: (stdin ended|stdin closed|MCP connection closed)/)
   })
 })

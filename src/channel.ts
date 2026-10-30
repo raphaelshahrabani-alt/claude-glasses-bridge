@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import type { Behavior, Hub } from './hub.ts'
+import { log } from './log.ts'
 
 export const INSTRUCTIONS = `Requests spoken through the user's Meta smart glasses arrive as <channel source="glasses" chat_id="..."> tags. A voice assistant on their phone relays them, so the wording may be paraphrased or contain speech-to-text mistakes.
 
@@ -69,6 +70,7 @@ export function createChannel(hub: Hub, opts: { permissionRelay: boolean }): Cha
     }
     const live = hub.isWaiting(chat_id)
     hub.deliverReply(chat_id, text.trim())
+    log(`reply ${chat_id} (${live ? 'delivered' : 'queued for later'}): ${JSON.stringify(text.trim().slice(0, 120))}`)
     return {
       content: [{ type: 'text', text: live ? 'sent' : 'queued: the user will hear it on their next call' }],
     }

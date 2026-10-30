@@ -68,6 +68,9 @@ Set these with `-e` when you register the server, for example `claude mcp add gl
 | `GLASSES_DATA_DIR` | `~/.claude-glasses-bridge` | Token file, plus `frames/`, which keeps the latest 100 camera frames. |
 | `GLASSES_WAIT_S` | `110` | How long a request waits for Claude's reply before answering "still working". A later reply goes to `/pending-notifications`. |
 | `GLASSES_PERMISSION_RELAY` | off | Set to `1` to approve or deny tool calls by voice. See below. |
+| `GLASSES_LISTEN` | `auto` | `auto` opens the port only in a Claude Code session started with `--channels` or `--dangerously-load-development-channels`. `always` opens it in every session. |
+
+Registering at user scope means every Claude Code process starts a copy of the bridge. That includes other sessions, Claude Code's background spare processes (`claude bg-spare`), and plugins that run Claude in the background. In `auto` mode those copies stay quiet, so the port belongs to the session that can actually deliver your messages.
 
 ## Approving tool calls by voice
 
@@ -114,7 +117,8 @@ The bridge listens on `127.0.0.1` by default, so only processes on the same comp
 - **Run `bun run talk` in a plain terminal, never in Claude Code's prompt.** If Claude runs it, Claude is stuck waiting on a command that is waiting for Claude.
 - **`/mcp` shows glasses as failed:** usually Bun isn't on the `PATH` Claude Code sees. Register it with the full path: `claude mcp add glasses --scope user -- "$HOME/.bun/bin/bun" "$PWD/src/server.ts"`.
 - **The server disconnects, or nothing arrives:** read `~/.claude-glasses-bridge/bridge.log`. It records every start, connection, message and exit, including the reason the bridge stopped. For Claude Code's side, start it with `--debug` and look in `~/.claude/debug/`.
-- **"could not listen on 127.0.0.1:8790":** another Claude Code session is already running the bridge. Each port can serve one session; quit the other, or set a different `GLASSES_PORT`.
+- **"could not listen on 127.0.0.1:8790":** another Claude Code session with channels is already running the bridge. Each port can serve one session; quit the other, or set a different `GLASSES_PORT`.
+- **"not listening: this Claude Code process was not started with channels enabled":** normal for other Claude Code processes. If it's the line for your channel session, tell us what the `started by` line before it says.
 
 ## Development
 
