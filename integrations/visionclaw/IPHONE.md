@@ -141,10 +141,26 @@ Wait for a line containing `registered worker`. If you also deployed VisionClaw'
    - Plug it into the Mac with a cable.
    - Turn on **Settings → Privacy & Security → Developer Mode**, and restart when asked. If the toggle isn't there, it appears after Xcode has seen the phone once.
 
-5. **Pin LiveKit to 2.18.0.** VisionClaw (last updated Oct 21, 2026) was built against LiveKit's Swift SDK 2.18.0. LiveKit 2.19.0 (Oct 27) changed APIs it uses, so Xcode's default "latest 2.x" fails to build with "Expression is 'async' but is not marked with 'await'" in `LiveKitSession.swift`. To pin it:
-   - Click the blue **CameraAccess** project, then **CameraAccess** under **PROJECT** (not TARGETS), then the **Package Dependencies** tab.
-   - Double-click **client-sdk-swift**, set the rule to **Exact Version** `2.18.0`, and click **Done**.
-   - Then run **Product → Clean Build Folder** (⇧⌘K).
+5. **Pin LiveKit to 2.18.0.** VisionClaw (last updated Oct 21, 2026) was built against LiveKit's Swift SDK 2.18.0. LiveKit 2.19.0 (Oct 27) changed APIs it uses, so Xcode's default "latest 2.x" fails to build with "Expression is 'async' but is not marked with 'await'" in `LiveKitSession.swift`. Editing the rule in Xcode's Package Dependencies tab didn't stick in testing: Xcode resolved LiveKit 2.0.0, whose WebRTC download now returns 404. Set the pin in the project file instead. Quit Xcode (⌘Q) first, then:
+   ```bash
+   cd ~/VisionClaw/samples/CameraAccess
+   python3.12 - <<'PY'
+   import re, pathlib
+   p = pathlib.Path("CameraAccess.xcodeproj/project.pbxproj")
+   s = p.read_text()
+   pat = re.compile(r'(repositoryURL = "https://github.com/livekit/client-sdk-swift";\s*requirement = \{)(.*?)(\};)', re.S)
+   m = pat.search(s)
+   print("was:", " ".join(m.group(2).split()))
+   s = s[:m.start(2)] + "\n\t\t\t\tkind = exactVersion;\n\t\t\t\tversion = 2.18.0;\n\t\t\t" + s[m.end(2):]
+   p.write_text(s)
+   print("now: kind = exactVersion; version = 2.18.0;")
+   PY
+   rm -f CameraAccess.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+   rm -rf ~/Library/Developer/Xcode/DerivedData/CameraAccess-*
+   xcodebuild -resolvePackageDependencies -project CameraAccess.xcodeproj
+   open CameraAccess.xcodeproj
+   ```
+   The `xcodebuild` output should list `client-sdk-swift` at **2.18.0** and `webrtc-xcframework` at **150.x**.
 
 6. **Run the app.** Pick your iPhone as the run destination at the top of Xcode and press **⌘R**.
    - The first time, iOS blocks the app until you trust it: **Settings → General → VPN & Device Management** → your Apple ID → **Trust**. Then press ⌘R again.
