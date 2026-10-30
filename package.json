@@ -9,7 +9,8 @@
     "token": "bun scripts/token.ts",
     "talk": "bun scripts/talk.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "doctor": "bun scripts/doctor.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

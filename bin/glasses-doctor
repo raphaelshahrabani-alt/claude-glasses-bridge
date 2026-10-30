@@ -1,0 +1,5 @@
+#!/bin/bash
+# Checks the glasses setup end to end and times Claude Code. See scripts/doctor.ts.
+#   glasses-doctor [--quick]
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bun "$here/../scripts/doctor.ts" "$@"

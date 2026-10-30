@@ -222,7 +222,9 @@ start-glasses ~/path/to/your-project
 
 In the Claude Code window, choose "I am using this for local development". Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
 
-`start-glasses` runs Claude Code on Sonnet at low effort with auto permissions, so answers come back quickly. Set `GLASSES_MODEL=opus`, `GLASSES_EFFORT=high` or `GLASSES_PERMISSION_MODE=manual` to change that. It also starts the worker with `CLAUDE_CODE_ONLY=1`, which drops VisionClaw's `execute` and `browse` tools. Those need keys this setup doesn't have, and the voice model wasted time trying them.
+`start-glasses` runs Claude Code on Sonnet at low effort with auto permissions, so answers come back quickly. Set `GLASSES_MODEL=opus`, `GLASSES_EFFORT=high` or `GLASSES_PERMISSION_MODE=manual` to change that. It also starts the worker with `CLAUDE_CODE_ONLY=1`. That makes the voice model a thin voice for Claude Code: anything that needs knowledge or action goes to Claude Code, which knows your projects. Live web facts go to Gemini's two-second quick_search. VisionClaw's `execute` and `browse` tools, which need keys this setup doesn't have, are left out.
+
+To check everything, run `~/claude-glasses-bridge/bin/glasses-doctor`. It marks each piece ✓ or ✗ with the fix, and times two live questions to Claude Code.
 
 **Updating from an earlier version of the patch:** reset the worker file and apply the new patch, then restart the worker:
 
