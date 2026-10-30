@@ -16,6 +16,8 @@ The patch adds a second destination for step 3. When `CLAUDE_CODE_URL` is set, t
 
 ## Setup
 
+**On an iPhone and a Mac, follow [IPHONE.md](IPHONE.md)** instead: it covers every step, including running VisionClaw's gateway on your Mac. What follows is the short version.
+
 1. **Get VisionClaw working first**, following its README: the gateway, a LiveKit Cloud project, the iOS or Android app, and Developer Mode in the Meta AI app. Voice calls should work before you add Claude Code.
 
 2. **Apply the patch:**

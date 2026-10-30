@@ -23,7 +23,7 @@ The bridge is a Claude Code [channel](https://code.claude.com/docs/en/channels-r
 
 - **Claude Code** with channels (a research preview), signed in with a claude.ai account or a Console API key. On Team and Enterprise plans an admin has to [enable channels](https://code.claude.com/docs/en/channels#enterprise-controls) first.
 - **Bun** 1.1 or later.
-- **A glasses app.** [VisionClaw](integrations/visionclaw/README.md) with the patch in this repo, or anything that can make an HTTP POST (see [HTTP API](#http-api)).
+- **A glasses app.** [VisionClaw](integrations/visionclaw/README.md) with the patch in this repo (iPhone and Mac: [step-by-step guide](integrations/visionclaw/IPHONE.md)), or anything that can make an HTTP POST (see [HTTP API](#http-api)).
 
 ## Quick start
 
