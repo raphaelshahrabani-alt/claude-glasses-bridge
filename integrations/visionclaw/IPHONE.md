@@ -162,6 +162,11 @@ Wait for a line containing `registered worker`. If you also deployed VisionClaw'
    ```
    The `xcodebuild` output should list `client-sdk-swift` at **2.18.0** and `webrtc-xcframework` at **150.x**.
 
+   Xcode 26.3's Swift compiler then still reports "Expression is 'async' but is not marked with 'await'" on three `LocalVideoTrack.create…` calls in `LiveKitSession.swift` (lines 236, 239 and 385). All three are inside `async` functions, so adding `await` is enough:
+   ```bash
+   sed -i '' -E 's/= LocalVideoTrack\.create(BufferTrack|CameraTrack)\(/= await LocalVideoTrack.create\1(/' CameraAccess/OpenClaw/LiveKitSession.swift
+   ```
+
 6. **Run the app.** Pick your iPhone as the run destination at the top of Xcode and press **⌘R**.
    - The first time, iOS blocks the app until you trust it: **Settings → General → VPN & Device Management** → your Apple ID → **Trust**. Then press ⌘R again.
    - With a free Apple ID, the app stops opening after 7 days; press ⌘R to reinstall it.
