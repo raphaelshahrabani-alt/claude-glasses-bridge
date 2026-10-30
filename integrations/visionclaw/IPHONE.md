@@ -70,6 +70,24 @@ npm run dev
 
 **About the placeholder Anthropic key:** VisionClaw has its own action agent, the `execute` tool, for email, reminders and so on. It runs on Anthropic's API, so it won't work with a placeholder key, and Claude Code does the work instead. If you want it as well, put a real Console API key in `.env` and run `npm run provision` once.
 
+The app's access-code check also calls the gateway's `/apps` page, which lists your connected apps through Anthropic's API. With the placeholder key that call fails, and the app says "The server had a problem". Make `/apps` return an empty list when the key is the placeholder (run this in `~/VisionClaw/gateway`; `npm run dev` reloads on its own):
+
+```bash
+python3.12 - <<'PY'
+import pathlib
+p = pathlib.Path("src/connect.ts"); s = p.read_text()
+old = "    try {\n      const { vaultId } = await ensureUser(userId);\n      const credentialByUrl"
+new = ("    // No Anthropic key (Claude Code does the work): nothing to connect.\n"
+       "    if (process.env.ANTHROPIC_API_KEY === \"sk-ant-placeholder\") {\n"
+       "      res.json({ apps: [] });\n"
+       "      return;\n"
+       "    }\n" + old)
+assert s.count(old) == 1, "pattern not found"
+p.write_text(s.replace(old, new))
+print("patched src/connect.ts")
+PY
+```
+
 ## 4. Claude Code with the bridge (tab 2: "claude")
 
 ```bash
