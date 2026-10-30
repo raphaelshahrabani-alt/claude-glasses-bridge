@@ -1,0 +1,128 @@
+diff --git a/agent/main.py b/agent/main.py
+index 5d3659e..4fe8beb 100644
+--- a/agent/main.py
++++ b/agent/main.py
+@@ -365,6 +365,23 @@ BROWSE_KEEPALIVE_S = 90
+ # instruction blob for a voice model, not an answer, so never relay it as one.
+ GATEWAY_DEFERRAL_PREFIX = "[task started]"
+ 
++# Optional: Claude Code on the user's own computer, reached through
++# claude-glasses-bridge. When CLAUDE_CODE_URL is unset the claude_code tool is
++# not offered at all. The bridge speaks the same chat-completions contract as
++# the gateway, including the GATEWAY_DEFERRAL_PREFIX for long tasks.
++CLAUDE_CODE_URL = os.environ.get("CLAUDE_CODE_URL", "").rstrip("/")
++
++CLAUDE_CODE_INSTRUCTIONS = """
++
++The claude_code tool is Claude Code running on the user's own computer: it reads and edits
++their files and code, runs commands, scripts and tests, uses git, and uses any tools the user
++connected to it. Use it when the user mentions Claude, Claude Code, their computer, laptop or
++Mac, their code, repo or projects, or files on their machine. Speak a brief acknowledgment
++before calling it; it often takes a minute or more, and the result may arrive as a follow-up.
++If a claude_code result asks the user to approve something by saying yes or no followed by a
++short code, read it to them, wait for their answer, and pass their exact words back as a new
++claude_code task, for example "yes k q r t x". Never answer an approval yourself."""
++
+ _relay_tasks: set[asyncio.Task] = set()
+ 
+ 
+@@ -456,6 +473,47 @@ async def _drain_pending(user_id: str) -> list[str]:
+         return []
+ 
+ 
++def _claude_code_headers() -> dict[str, str]:
++    return {"Authorization": f"Bearer {os.environ['CLAUDE_CODE_TOKEN']}"}
++
++
++async def _claude_code_execute(task: str, image_b64: str | None = None) -> str:
++    payload: dict = {"messages": [{"role": "user", "content": task}]}
++    if image_b64:
++        payload["image"] = image_b64
++    async with aiohttp.ClientSession() as http:
++        async with http.post(
++            f"{CLAUDE_CODE_URL}/v1/chat/completions",
++            headers=_claude_code_headers(),
++            json=payload,
++            timeout=aiohttp.ClientTimeout(total=120),
++        ) as resp:
++            body = await resp.json()
++    try:
++        return body["choices"][0]["message"]["content"]
++    except (KeyError, IndexError):
++        logger.warning("claude code bridge returned unexpected shape: %s", json.dumps(body)[:300])
++        return "The Claude Code bridge returned an unexpected response."
++
++
++async def _drain_claude_code_pending() -> list[str]:
++    """Claude Code answers that landed after the call stopped waiting for them."""
++    if not CLAUDE_CODE_URL:
++        return []
++    try:
++        async with aiohttp.ClientSession() as http:
++            async with http.get(
++                f"{CLAUDE_CODE_URL}/pending-notifications",
++                headers=_claude_code_headers(),
++                timeout=aiohttp.ClientTimeout(total=10),
++            ) as resp:
++                body = await resp.json()
++        return [f"A Claude Code task from earlier finished. Result: {n}" for n in body.get("notifications") or []]
++    except Exception:
++        logger.exception("claude code pending drain failed")
++        return []
++
++
+ def _card_text(raw: str, limit: int) -> str:
+     """Markdown-ish search prose -> plain card text."""
+     text = re.sub(r"[*_`#]+", "", raw)
+@@ -845,6 +903,26 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
+     return await _run_delegated(ctx, task, "execute", job)
+ 
+ 
++@function_tool
++async def claude_code(ctx: RunContext[Userdata], task: str, attach_view: bool = False) -> str:
++    """Claude Code, running on the user's own computer: reads and edits their files and code,
++    runs commands, scripts and tests, uses git, and uses any tools the user connected to it. Use
++    it when the user mentions Claude, their computer, their code or projects, or files on their
++    machine. Describe the task completely. Set attach_view=true when the task concerns something
++    the user is showing on camera (a screen, an error message, a whiteboard, a document): the
++    current camera frame is then attached so Claude Code can read it."""
++    mode = os.environ.get("ATTACH_VIEW_MODE", "auto")
++    should_attach = attach_view if mode == "auto" else (mode == "always")
++    image_b64 = encode_latest_frame(ctx.userdata.frames) if should_attach else None
++    logger.info(
++        "claude_code start: user=%s attach_view=%s image_kb=%d task=%r",
++        ctx.userdata.user_id, attach_view, len(image_b64 or "") * 3 // 4096, task[:200],
++    )
++    ctx.userdata.tracer.emit("agent_action", tool="claude_code", task=task, attached_view=bool(image_b64))
++    job = asyncio.ensure_future(_claude_code_execute(task, image_b64))
++    return await _run_delegated(ctx, task, "claude_code", job)
++
++
+ @function_tool
+ async def browse(ctx: RunContext[Userdata], task: str) -> str:
+     """The computer-use / shopping / browser agent: drives a real web browser on a live
+@@ -1245,8 +1323,10 @@ async def entrypoint(ctx: JobContext):
+ 
+     await session.start(
+         agent=Agent(
+-            instructions=INSTRUCTIONS + (ASSISTIVE_INSTRUCTIONS if profile == "assistive" else ""),
+-            tools=[execute, browse, quick_search, show_card, save_note, recall_notes, delete_note],
++            instructions=INSTRUCTIONS + (ASSISTIVE_INSTRUCTIONS if profile == "assistive" else "")
++            + (CLAUDE_CODE_INSTRUCTIONS if CLAUDE_CODE_URL else ""),
++            tools=[execute, browse, quick_search, show_card, save_note, recall_notes, delete_note]
++            + ([claude_code] if CLAUDE_CODE_URL else []),
+         ),
+         room=ctx.room,
+         # Video is opt-in (RoomInputOptions.video_enabled defaults to False);
+@@ -1259,7 +1339,10 @@ async def entrypoint(ctx: JobContext):
+     # gateway; deliver them up front so a hangup never discards an answer.
+     # Dead app connections ride the same opening beat: one brief mention,
+     # then silence -- the fix lives in Settings -> Connected Apps.
+-    pending, stale_apps = await asyncio.gather(_drain_pending(user_id), _apps_needing_reconnect(user_id))
++    pending, stale_apps, claude_code_pending = await asyncio.gather(
++        _drain_pending(user_id), _apps_needing_reconnect(user_id), _drain_claude_code_pending()
++    )
++    pending += claude_code_pending
+     reconnect_note = ""
+     if stale_apps:
+         logger.info("apps need reconnect: user=%s apps=%s", user_id, stale_apps)

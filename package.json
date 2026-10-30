@@ -1,0 +1,22 @@
+{
+  "name": "claude-glasses-bridge",
+  "version": "0.1.0",
+  "description": "Talk to Claude Code through Meta smart glasses: a Claude Code channel with an HTTP API for voice apps",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "token": "bun scripts/token.ts",
+    "talk": "bun scripts/talk.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}
