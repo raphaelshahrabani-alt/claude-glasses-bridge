@@ -263,7 +263,7 @@ echo '{"test": "web search", "ok": true, "first_s": 2.1, "total_s": 12.4, "reply
     worker.kill()
   })
 
-  async function doctor(args: string[] = []) {
+  async function doctor(args: string[] = [], extraEnv: Record<string, string> = {}) {
     const proc = Bun.spawn([process.execPath, join(root, 'scripts', 'doctor.ts'), ...args], {
       env: {
         PATH: process.env.PATH ?? '',
@@ -275,6 +275,7 @@ echo '{"test": "web search", "ok": true, "first_s": 2.1, "total_s": 12.4, "reply
         GLASSES_VOICE_PYTHON: python,
         VISIONCLAW_DIR: visionclaw,
         GATEWAY_URL: 'http://127.0.0.1:18795',
+        ...extraEnv,
       },
       stdout: 'pipe',
     })
@@ -316,9 +317,37 @@ echo '{"test": "web search", "ok": true, "first_s": 2.1, "total_s": 12.4, "reply
     writeFileSync(join(dataDir, 'voice.env'), 'ELEVEN_API_KEY=sk_secret_value\n')
     writeFileSync(join(dataDir, 'email-accounts.json'), JSON.stringify([{ address: 'me@gmail.com' }, { address: 'me@icloud.com' }]))
     const { out } = await doctor(['--quick'])
-    expect(out).toContain('✓ the voice is ElevenLabs')
+    expect(out).toContain('✓ the voice is ElevenLabs (run glasses-doctor without --quick to test the key)')
     expect(out).toContain('✓ email accounts: me@gmail.com, me@icloud.com')
     expect(out).not.toContain('sk_secret_value')
+  })
+
+  test('says why ElevenLabs refuses the key, and that the backup voice speaks', async () => {
+    writeFileSync(join(dataDir, 'voice.env'), 'ELEVEN_API_KEY=sk_secret_value\n')
+    // the voicecheck.py in the stand-in Python is the same script for every call, so it answers by its first argument
+    const refusing = join(dataDir, 'fake-python-refusing')
+    writeFileSync(refusing, `#!/bin/bash
+case "$1" in
+  *voicecheck.py) echo '{"ok": false, "status": "detected_unusual_activity", "problem": "ElevenLabs blocked its free plan for this account", "fix": "a paid plan lifts it", "key_ends": "alue"}' ;;
+  *) exec ${python} "$@" ;;
+esac
+`)
+    chmodSync(refusing, 0o755)
+    const { code, out } = await doctor([], { GLASSES_VOICE_PYTHON: refusing })
+    expect(out).toContain("✗ the ElevenLabs voice can't speak: ElevenLabs blocked its free plan for this account; the backup voice speaks instead")
+    expect(out).toContain('→ a paid plan lifts it')
+    expect(out).not.toContain('sk_secret_value')
+    expect(code).toBe(1)
+    const working = join(dataDir, 'fake-python-working')
+    writeFileSync(working, `#!/bin/bash
+case "$1" in
+  *voicecheck.py) echo '{"ok": true, "key_ends": "alue"}' ;;
+  *) exec ${python} "$@" ;;
+esac
+`)
+    chmodSync(working, 0o755)
+    expect((await doctor(['--quick'], { GLASSES_VOICE_PYTHON: working })).out).toContain('run glasses-doctor without --quick')
+    expect((await doctor([], { GLASSES_VOICE_PYTHON: working })).out).toContain('✓ the voice is ElevenLabs, and its key (ending alue) works')
   })
 
   test('--quick skips the live test', async () => {

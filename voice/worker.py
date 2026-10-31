@@ -196,22 +196,38 @@ def make_stt(terms: list[str]):
 
 # "Eric - smooth, trustworthy", an ElevenLabs voice made for assistants.
 ELEVENLABS_VOICE = "cjVigY5qzO86Huf0OWal"
+DEFAULT_TTS = "cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
 
 
-def make_tts():
-    key = os.environ.get("ELEVEN_API_KEY") or os.environ.get("ELEVENLABS_API_KEY")
-    if key:
-        from livekit.plugins import elevenlabs
-
-        options = {"voice_id": os.environ.get("GLASSES_ELEVENLABS_VOICE", ELEVENLABS_VOICE), "api_key": key}
-        if os.environ.get("GLASSES_ELEVENLABS_MODEL"):
-            options["model"] = os.environ["GLASSES_ELEVENLABS_MODEL"]
-        return elevenlabs.TTS(**options)
+def backup_tts():
     if os.environ.get("DEEPGRAM_API_KEY"):
         from livekit.plugins import deepgram
 
         return deepgram.TTS(model=os.environ.get("GLASSES_DEEPGRAM_VOICE", "aura-2-thalia-en"))
-    return os.environ.get("GLASSES_TTS", "cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
+    from livekit.agents import inference
+
+    return inference.TTS.from_model_string(os.environ.get("GLASSES_TTS", DEFAULT_TTS))
+
+
+def make_tts():
+    key = os.environ.get("ELEVEN_API_KEY") or os.environ.get("ELEVENLABS_API_KEY")
+    if not key:
+        return backup_tts()
+    from livekit.agents import tts
+    from livekit.plugins import elevenlabs
+
+    options = {"voice_id": os.environ.get("GLASSES_ELEVENLABS_VOICE", ELEVENLABS_VOICE), "api_key": key}
+    if os.environ.get("GLASSES_ELEVENLABS_MODEL"):
+        options["model"] = os.environ["GLASSES_ELEVENLABS_MODEL"]
+    primary = elevenlabs.TTS(**options)
+    try:
+        backup = backup_tts()
+    except Exception:
+        log.exception("no backup voice")
+        return primary
+    # When ElevenLabs refuses (a bad key, no credits left), the backup voice
+    # speaks instead of silence; glasses-doctor says why ElevenLabs refused.
+    return tts.FallbackAdapter([primary, backup], max_retry_per_tts=0)
 
 
 class Camera:
@@ -381,7 +397,10 @@ async def entrypoint(ctx: JobContext) -> None:
     def _on_error(event) -> None:
         error = getattr(event, "error", event)
         log.error("voice error (%s): %s", getattr(event, "source", "?"), error)
-        if "429" in str(error) or "quota" in str(error).lower() or "credit" in str(error).lower():
+        if "elevenlabs" in str(error).lower():
+            log.error("ElevenLabs refused to speak, so the backup voice is speaking. To see why, run: "
+                      "~/claude-glasses-bridge/bin/glasses-doctor")
+        elif "429" in str(error) or "quota" in str(error).lower() or "credit" in str(error).lower():
             log.error(
                 "LiveKit Inference may be out of free credits. Put a Deepgram key in "
                 "~/.claude-glasses-bridge/voice.env (see the README, 'Direct voice')."

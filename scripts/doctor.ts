@@ -119,9 +119,26 @@ async function checkDirect() {
   const voiceEnvFile = join(config.dataDir, 'voice.env')
   const voiceEnv = existsSync(voiceEnvFile) ? readFileSync(voiceEnvFile, 'utf8') : ''
   const has = (key: string) => new RegExp(`^\\s*(export\\s+)?${key}=\\S`, 'm').test(voiceEnv) || !!process.env[key]
-  if (has('ELEVEN_API_KEY') || has('ELEVENLABS_API_KEY')) ok('the voice is ElevenLabs')
-  else if (has('DEEPGRAM_API_KEY')) ok('the voice is Deepgram (for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
-  else info('(the voice is LiveKit Inference; for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
+  if (has('ELEVEN_API_KEY') || has('ELEVENLABS_API_KEY')) {
+    const python = process.env.GLASSES_VOICE_PYTHON ?? join(config.dataDir, 'voice-venv', 'bin', 'python')
+    const checker = existsSync(python) && !quick
+    if (!checker) {
+      ok('the voice is ElevenLabs (run glasses-doctor without --quick to test the key)')
+    } else {
+      // Asks ElevenLabs itself why it refuses: the voice's own connection only says "closed unexpectedly".
+      const out = Bun.spawnSync([python, join(root, 'voice', 'voicecheck.py'), '--json'], { env: process.env }).stdout.toString()
+      let result: { ok?: boolean; problem?: string; fix?: string; key_ends?: string } = {}
+      try {
+        result = JSON.parse(out.trim().split('\n').pop() ?? '{}')
+      } catch {}
+      if (result.ok) ok(`the voice is ElevenLabs, and its key (ending ${result.key_ends}) works`)
+      else bad(`the ElevenLabs voice can't speak: ${result.problem ?? 'the check failed'}; the backup voice speaks instead`, result.fix ?? `read ${join(config.dataDir, 'voice.log')}`)
+    }
+  }
+  if (!(has('ELEVEN_API_KEY') || has('ELEVENLABS_API_KEY')) && has('DEEPGRAM_API_KEY')) ok('the voice is Deepgram (for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
+  if (!(has('ELEVEN_API_KEY') || has('ELEVENLABS_API_KEY') || has('DEEPGRAM_API_KEY'))) {
+    info('(the voice is LiveKit Inference; for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
+  }
 
   const emailFile = join(config.dataDir, 'email-accounts.json')
   let emailAccounts: string[] = []

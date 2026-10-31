@@ -100,6 +100,8 @@ Either way the patched app keeps the glasses camera off during calls. When you a
 ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY
 ```
 
+If ElevenLabs refuses a request (a wrong key, no credits left), the voice falls back to the LiveKit voice instead of going silent. `glasses-doctor` tests the key and says why ElevenLabs refuses it.
+
 The default voice is Eric ("smooth, trustworthy", made for assistants). Others that suit a call: Chris `iP95p4xoKVk53GoZ742B` (down to earth), Will `bIHbv24MWmeRgasZH58o` (relaxed), Roger `CwhRBWXzGAHq8TQ4Fs17` (laid back), Jessica `cgSgspJ2msm6clMCkdW9` (warm, female) and River `SAz9YHcvj6GT2YYXdXww` (calm, neutral). Set one with `GLASSES_ELEVENLABS_VOICE=<id>` in `voice.env`. ElevenLabs bills by characters spoken; the free plan covers about 10 minutes a month.
 
 **Speech-to-text and, without ElevenLabs, the voice** use [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3 and a Cartesia voice), billed to your LiveKit Cloud project. No other account is needed, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls, and then speech stops working (`glasses-doctor` says so). For more, either upgrade the LiveKit plan, or create a [Deepgram](https://deepgram.com) account (it starts with free credit) and save its key with `~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY`. Speech-to-text (and the voice, without ElevenLabs) then come from Deepgram directly.
@@ -221,6 +223,7 @@ The bridge listens on `127.0.0.1` by default, so only processes on the same comp
 ## Troubleshooting
 
 - **It says "credit balance is too low":** Claude Code was paying with an Anthropic API key instead of your Claude subscription. The voice worker now leaves `ANTHROPIC_API_KEY` out; update and restart start-glasses. If it still happens, `glasses-doctor`'s live test says which account Claude Code uses (an Anthropic Console login also bills prepaid credit: `/logout`, then `/login` with your Claude account).
+- **You hear nothing, and `voice.log` says "ElevenLabs websocket connection closed unexpectedly" (status 1008):** ElevenLabs is refusing the request. The voice then falls back to the LiveKit voice, so you still hear answers. Run `glasses-doctor`: it asks ElevenLabs directly and says why. The usual reasons are a key that isn't valid, a key without Text to Speech access (edit it on elevenlabs.io → API Keys), no credits left, or ElevenLabs blocking its free plan for "unusual activity". That last one only a paid plan lifts. Save a new key with `~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY`.
 - **"Agent left the call" or no answer with the direct voice:** look at the "glasses: voice" window and `~/.claude-glasses-bridge/voice.log`, then run `glasses-doctor`. If LiveKit Inference ran out of credits, add a Deepgram key (see [Direct voice](#direct-voice)).
 - **Run `bun run talk` in a plain terminal, never in Claude Code's prompt.** If Claude runs it, Claude is stuck waiting on a command that is waiting for Claude.
 - **`/mcp` shows glasses as failed:** usually Bun isn't on the `PATH` Claude Code sees. Register it with the full path: `claude mcp add glasses --scope user -- "$HOME/.bun/bin/bun" "$PWD/src/server.ts"`.
