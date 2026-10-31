@@ -1,9 +1,12 @@
 #!/bin/bash
 # Saves a key in ~/.claude-glasses-bridge/voice.env without showing it on screen,
-# replacing any earlier value. Restart the voice window afterwards.
+# replacing any earlier value. An ElevenLabs key is checked with ElevenLabs
+# first, and not kept if ElevenLabs says it isn't valid.
+# Restart the voice window afterwards.
 #   glasses-key ELEVEN_API_KEY
 set -euo pipefail
 
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 name="${1:-}"
 if [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
   echo "usage: glasses-key NAME   (for example: glasses-key ELEVEN_API_KEY)" >&2
@@ -22,9 +25,40 @@ if [[ -z "$value" ]]; then
 fi
 
 touch "$file"
+before="$(mktemp "$file.before.XXXXXX")"
+cp "$file" "$before"
 tmp="$(mktemp "$file.XXXXXX")"
 grep -Ev "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file" > "$tmp" || true
 printf '%s=%s\n' "$name" "$value" >> "$tmp"
 chmod 600 "$tmp"
 mv "$tmp" "$file"
-echo "Saved $name (it ends in ${value: -4}). Restart the voice window to use it."
+echo "Saved $name (it ends in ${value: -4})."
+
+if [[ "$name" == ELEVEN_API_KEY || "$name" == ELEVENLABS_API_KEY ]]; then
+  echo "Checking it with ElevenLabs..."
+  result="$(ELEVEN_API_KEY="$value" GLASSES_DATA_DIR="$data_dir" "${GLASSES_VOICE_PYTHON:-python3}" \
+    "$root/voice/voicecheck.py" --json 2>/dev/null | tail -n 1 || true)"
+  field() { printf '%s' "$result" | sed -n "s/.*\"$1\": \"\\([^\"]*\\)\".*/\\1/p"; }
+  if [[ "$result" == *'"ok": true'* ]]; then
+    echo "✓ ElevenLabs accepts this key. Restart the voice window to use it."
+  elif [[ "$result" == *'"status": "invalid_api_key"'* ]]; then
+    cp "$before" "$file"
+    chmod 600 "$file"
+    rm -f "$before"
+    echo "✗ ElevenLabs says this key isn't valid, so I did not keep it." >&2
+    echo "  On elevenlabs.io open API Keys, click Create API Key, and copy the new key right away" >&2
+    echo "  (it is only shown once). Then run this again and paste it." >&2
+    exit 1
+  elif [[ "$result" == *'"status": "network"'* ]]; then
+    echo "(Couldn't reach ElevenLabs to check it: $(field problem). It is saved; glasses-doctor tests it later.)"
+  elif [[ -n "$result" ]]; then
+    echo "! The key itself is fine, but: $(field problem)." >&2
+    echo "  $(field fix)" >&2
+    echo "  Saved anyway; until this is sorted, the backup voice speaks." >&2
+  else
+    echo "(Couldn't check it just now. glasses-doctor tests it later.)"
+  fi
+else
+  echo "Restart the voice window to use it."
+fi
+rm -f "$before"
