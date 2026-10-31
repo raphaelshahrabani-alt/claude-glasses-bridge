@@ -120,8 +120,8 @@ async function checkDirect() {
   const voiceEnv = existsSync(voiceEnvFile) ? readFileSync(voiceEnvFile, 'utf8') : ''
   const has = (key: string) => new RegExp(`^\\s*(export\\s+)?${key}=\\S`, 'm').test(voiceEnv) || !!process.env[key]
   if (has('ELEVEN_API_KEY') || has('ELEVENLABS_API_KEY')) ok('the voice is ElevenLabs')
-  else if (has('DEEPGRAM_API_KEY')) ok('the voice is Deepgram (add ELEVEN_API_KEY to voice.env for ElevenLabs)')
-  else info('(the voice is LiveKit Inference; put ELEVEN_API_KEY=... in ~/.claude-glasses-bridge/voice.env for ElevenLabs)')
+  else if (has('DEEPGRAM_API_KEY')) ok('the voice is Deepgram (for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
+  else info('(the voice is LiveKit Inference; for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
 
   const emailFile = join(config.dataDir, 'email-accounts.json')
   let emailAccounts: string[] = []

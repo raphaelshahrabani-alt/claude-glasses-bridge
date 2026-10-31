@@ -94,19 +94,15 @@ Either way the patched app keeps the glasses camera off during calls. When you a
 - **Your Chrome.** The work model runs with `--chrome`, so it can browse, read logged-in pages, fill forms and click in your own Chrome. It needs the [Claude in Chrome](https://code.claude.com/docs/en/chrome) extension, signed in to your Claude account (check with `/chrome` in Claude Code). `GLASSES_CHROME=0` turns it off.
 - **Every email account.** `bin/glasses-email add you@example.com` adds an account (Gmail, Google Workspace, iCloud, Yahoo, Fastmail, Zoho, or any IMAP and SMTP server) with an app password, which goes in the macOS Keychain. The work model then searches all inboxes at once and reads, drafts and sends from any of them (`voice/email_mcp.py`). Sending always asks "Quick check before I go on: send an email from ... to ..., subject ... Is that okay?", even in auto mode. Microsoft (Outlook, Hotmail) accounts don't allow app passwords, so connect those in Claude Code instead. `glasses-email list` shows the accounts and whether each logs in.
 
-**A natural voice: ElevenLabs.** Create an API key at [elevenlabs.io](https://elevenlabs.io) (your profile → API Keys, with Text to Speech access) and put it in `~/.claude-glasses-bridge/voice.env`:
+**A natural voice: ElevenLabs.** Create an API key at [elevenlabs.io](https://elevenlabs.io) (your profile → API Keys, with Text to Speech access) and save it with `bin/glasses-key`, which asks for it without showing it and writes it to `~/.claude-glasses-bridge/voice.env`:
 
 ```
-ELEVEN_API_KEY=your-key
+~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY
 ```
 
 The default voice is Eric ("smooth, trustworthy", made for assistants). Others that suit a call: Chris `iP95p4xoKVk53GoZ742B` (down to earth), Will `bIHbv24MWmeRgasZH58o` (relaxed), Roger `CwhRBWXzGAHq8TQ4Fs17` (laid back), Jessica `cgSgspJ2msm6clMCkdW9` (warm, female) and River `SAz9YHcvj6GT2YYXdXww` (calm, neutral). Set one with `GLASSES_ELEVENLABS_VOICE=<id>` in `voice.env`. ElevenLabs bills by characters spoken; the free plan covers about 10 minutes a month.
 
-**Speech-to-text and, without ElevenLabs, the voice** use [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3 and a Cartesia voice), billed to your LiveKit Cloud project. No other account is needed, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls, and then speech stops working (`glasses-doctor` says so). For more, either upgrade the LiveKit plan, or create a [Deepgram](https://deepgram.com) account (it starts with free credit) and put the key in `~/.claude-glasses-bridge/voice.env`. Speech-to-text and the voice then come from Deepgram directly:
-
-```
-DEEPGRAM_API_KEY=your-key
-```
+**Speech-to-text and, without ElevenLabs, the voice** use [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3 and a Cartesia voice), billed to your LiveKit Cloud project. No other account is needed, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls, and then speech stops working (`glasses-doctor` says so). For more, either upgrade the LiveKit plan, or create a [Deepgram](https://deepgram.com) account (it starts with free credit) and save its key with `~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY`. Speech-to-text (and the voice, without ElevenLabs) then come from Deepgram directly.
 
 Other settings that can go in `voice.env` (restart the voice window after changing it):
 

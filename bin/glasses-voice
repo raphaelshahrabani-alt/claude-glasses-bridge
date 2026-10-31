@@ -93,7 +93,7 @@ if [[ -n "${ELEVEN_API_KEY:-${ELEVENLABS_API_KEY:-}}" ]]; then
 elif [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
   echo "glasses-voice: voice: Deepgram"
 else
-  echo "glasses-voice: voice: LiveKit Inference (put ELEVEN_API_KEY=... in $data_dir/voice.env for ElevenLabs)"
+  echo "glasses-voice: voice: LiveKit Inference (for ElevenLabs: $root/bin/glasses-key ELEVEN_API_KEY)"
 fi
 echo "glasses-voice: calls are written to $data_dir/calls/"
 exec "$venv/bin/python" "$root/voice/worker.py" start

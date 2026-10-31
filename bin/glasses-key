@@ -1,0 +1,30 @@
+#!/bin/bash
+# Saves a key in ~/.claude-glasses-bridge/voice.env without showing it on screen,
+# replacing any earlier value. Restart the voice window afterwards.
+#   glasses-key ELEVEN_API_KEY
+set -euo pipefail
+
+name="${1:-}"
+if [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+  echo "usage: glasses-key NAME   (for example: glasses-key ELEVEN_API_KEY)" >&2
+  exit 1
+fi
+data_dir="${GLASSES_DATA_DIR:-$HOME/.claude-glasses-bridge}"
+file="$data_dir/voice.env"
+mkdir -p "$data_dir"
+
+read -rs -p "Paste your $name and press Enter: " value || true
+echo
+value="$(printf '%s' "${value:-}" | tr -d '[:space:]')"
+if [[ -z "$value" ]]; then
+  echo "Nothing was pasted, so nothing changed." >&2
+  exit 1
+fi
+
+touch "$file"
+tmp="$(mktemp "$file.XXXXXX")"
+grep -Ev "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file" > "$tmp" || true
+printf '%s=%s\n' "$name" "$value" >> "$tmp"
+chmod 600 "$tmp"
+mv "$tmp" "$file"
+echo "Saved $name (it ends in ${value: -4}). Restart the voice window to use it."

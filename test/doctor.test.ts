@@ -306,7 +306,7 @@ echo '{"test": "web search", "ok": true, "first_s": 2.1, "total_s": 12.4, "reply
     expect(out).toContain('Claude said: "Three."')
     expect(out).toContain('✓ web search: first words after 2.1s, done in 12.4s')
     expect(out).not.toContain('without searching the web')
-    expect(out).toContain('(the voice is LiveKit Inference; put ELEVEN_API_KEY')
+    expect(out).toContain('(the voice is LiveKit Inference; for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
     expect(out).toContain('(no extra email accounts yet')
     expect(out).toContain('1 problem found.')
     expect(code).toBe(1)
