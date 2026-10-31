@@ -130,7 +130,7 @@ class EmailTest(unittest.TestCase):
             return FakeImap(self.servers[account.address], fail=account.address in self.broken)
 
         self.mail = Mail(self.store, imap=imap, smtp=lambda a, p: FakeSmtp(self.servers[a.address]))
-        self.servers["me@gmail.com"].add(message("Jessie <j@vendor.com>", "me@gmail.com", "Kiosk shipping",
+        self.servers["me@gmail.com"].add(message("Sam <s@vendor.com>", "me@gmail.com", "Kiosk shipping",
                                                  "The kiosk ships Monday.", html=True))
         self.servers["me@gmail.com"].add(message("news@site.com", "me@gmail.com", "Weekly digest", "Old news"), seen=True)
         self.servers["me@icloud.com"].add(message("Bank <b@bank.com>", "me@icloud.com", "Statement ready",
@@ -180,14 +180,14 @@ class EmailTest(unittest.TestCase):
         self.assertEqual(self.passwords[-1], "icloud-app-password")
 
     def test_gmail_keeps_its_own_sent_copy(self):
-        self.mail.send("me@gmail.com", "j@vendor.com", "Hello", "Hi Jessie")
+        self.mail.send("me@gmail.com", "s@vendor.com", "Hello", "Hi Sam")
         self.assertEqual(len(self.servers["me@gmail.com"].sent), 1)
         self.assertNotIn("[Gmail]/Sent Mail", self.servers["me@gmail.com"].folders)
 
     def test_drafts_go_in_the_drafts_folder(self):
-        self.mail.draft("gmail", "j@vendor.com", "Re: Kiosk", "Sounds good.")
+        self.mail.draft("gmail", "s@vendor.com", "Re: Kiosk", "Sounds good.")
         drafts = self.servers["me@gmail.com"].folders["[Gmail]/Drafts"]
-        self.assertEqual(email.message_from_bytes(drafts[0]["raw"], policy=email.policy.default)["To"], "j@vendor.com")
+        self.assertEqual(email.message_from_bytes(drafts[0]["raw"], policy=email.policy.default)["To"], "s@vendor.com")
 
     def test_ambiguous_or_unknown_accounts_are_refused(self):
         with self.assertRaisesRegex(ValueError, "me@gmail.com, me@icloud.com"):
@@ -243,10 +243,10 @@ class EmailCliTest(unittest.TestCase):
         return cli(list(argv), store=self.store, mail=self.mail, ask=lambda prompt: password)
 
     def test_adds_a_gmail_account(self):
-        self.assertEqual(self.run_cli("add", "Partner@Gmail.com", "--name", "Raph"), 0)
+        self.assertEqual(self.run_cli("add", "Partner@Gmail.com", "--name", "Alex"), 0)
         account = self.store.accounts()[0]
         self.assertEqual((account.address, account.provider, account.imap_host, account.name),
-                         ("Partner@Gmail.com", "gmail", "imap.gmail.com", "Raph"))
+                         ("Partner@Gmail.com", "gmail", "imap.gmail.com", "Alex"))
         # app passwords are shown in groups of four; the spaces aren't part of it
         self.assertEqual(self.store.password("Partner@Gmail.com"), "abcdefghijklmnop")
         self.assertEqual(oct(os.stat(self.store.secrets_file).st_mode & 0o777), "0o600")
@@ -265,18 +265,18 @@ class EmailCliTest(unittest.TestCase):
         original = email_accounts.mx_provider
         email_accounts.mx_provider = lambda domain: None
         try:
-            self.assertEqual(self.run_cli("add", "raph@mykiosks.ca"), 1)
-            self.assertEqual(self.run_cli("add", "raph@mykiosks.ca", "--imap", "mail.mykiosks.ca", "--smtp", "mail.mykiosks.ca:587"), 0)
+            self.assertEqual(self.run_cli("add", "alex@example-shop.ca"), 1)
+            self.assertEqual(self.run_cli("add", "alex@example-shop.ca", "--imap", "mail.example-shop.ca", "--smtp", "mail.example-shop.ca:587"), 0)
         finally:
             email_accounts.mx_provider = original
         account = self.store.accounts()[0]
-        self.assertEqual((account.imap_port, account.smtp_host, account.smtp_port), (993, "mail.mykiosks.ca", 587))
+        self.assertEqual((account.imap_port, account.smtp_host, account.smtp_port), (993, "mail.example-shop.ca", 587))
 
     def test_custom_domains_on_google_are_found_by_mx(self):
         original = email_accounts.mx_provider
         email_accounts.mx_provider = lambda domain: "gmail"
         try:
-            self.assertEqual(self.run_cli("add", "raph@company.com"), 0)
+            self.assertEqual(self.run_cli("add", "alex@company.com"), 0)
         finally:
             email_accounts.mx_provider = original
         self.assertEqual(self.store.accounts()[0].provider, "gmail")
