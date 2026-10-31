@@ -115,6 +115,25 @@ async function checkDirect() {
     info('(ANTHROPIC_API_KEY is set in your shell; the voice worker leaves it out, so Claude Code uses your Claude login)')
   }
 
+  // Names of the keys in voice.env, never their values.
+  const voiceEnvFile = join(config.dataDir, 'voice.env')
+  const voiceEnv = existsSync(voiceEnvFile) ? readFileSync(voiceEnvFile, 'utf8') : ''
+  const has = (key: string) => new RegExp(`^\\s*(export\\s+)?${key}=\\S`, 'm').test(voiceEnv) || !!process.env[key]
+  if (has('ELEVEN_API_KEY') || has('ELEVENLABS_API_KEY')) ok('the voice is ElevenLabs')
+  else if (has('DEEPGRAM_API_KEY')) ok('the voice is Deepgram (add ELEVEN_API_KEY to voice.env for ElevenLabs)')
+  else info('(the voice is LiveKit Inference; put ELEVEN_API_KEY=... in ~/.claude-glasses-bridge/voice.env for ElevenLabs)')
+
+  const emailFile = join(config.dataDir, 'email-accounts.json')
+  let emailAccounts: string[] = []
+  try {
+    emailAccounts = JSON.parse(readFileSync(emailFile, 'utf8')).map((a: { address: string }) => a.address)
+  } catch {}
+  if (emailAccounts.length) ok(`email accounts: ${emailAccounts.join(', ')} (glasses-email list checks that each logs in)`)
+  else info('(no extra email accounts yet: add each one with ~/claude-glasses-bridge/bin/glasses-email add you@example.com)')
+  if (!/^\s*(export\s+)?GLASSES_CHROME=0/m.test(voiceEnv)) {
+    info('(Chrome control is on: it needs the Claude in Chrome extension in your Chrome, signed in to your Claude account)')
+  }
+
   const persona = process.env.GLASSES_PERSONA ?? join(config.dataDir, 'persona.md')
   if (existsSync(persona)) ok(`your profile is loaded on every call (${persona})`)
   else info(`(no profile yet: copy templates/business-partner.md to ${persona} and fill it in)`)
@@ -190,8 +209,11 @@ async function checkDirect() {
       else bad(`${who}: Claude Code quit right after starting`, 'run claude in Terminal and check that you are logged in')
       continue
     }
-    const work = row.test === 'simple question' || row.test === 'email check'
+    const work = row.test === 'simple question' || row.test === 'email check' || row.test === 'web search'
     const reply = String(row.reply ?? '').replace(/^\s*\[work\]\s*/i, '')
+    if (row.test === 'web search' && row.ok && !(row.tools ?? []).some((t: string) => /WebSearch|WebFetch|chrome/i.test(t))) {
+      bad('web search: the work model answered a news question without searching the web', `read ${logFile}`)
+    }
     if (row.test === 'hand-off') {
       if (row.handed_off) ok(`hand-off: the quick voice passed an email question to the work model, saying "${reply}" after ${row.first_s}s`)
       else bad('hand-off: the quick voice answered an email question itself instead of passing it on', `read ${logFile}`)

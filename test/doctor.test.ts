@@ -250,7 +250,8 @@ echo '{"test": "quick answer", "ok": true, "first_s": 1.1, "total_s": 1.2, "repl
 echo '{"test": "hand-off", "ok": true, "first_s": 1.2, "total_s": 1.4, "reply": "[work] Sure, one sec.", "tools": [], "handed_off": true}'
 echo '{"test": "work model startup", "ok": true, "total_s": 0.8, "model": "opus", "effort": "medium", "cwd": "/Users/me/Desktop"}'
 echo '{"test": "simple question", "ok": true, "first_s": 4.4, "total_s": 4.5, "reply": "OK", "tools": [], "credentials": "none", "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth", "plugin:small-business:hubspot": "failed"}}'
-echo '{"test": "email check", "ok": true, "first_s": 3.6, "total_s": 7.1, "reply": "Three.", "tools": ["mcp__gmail__search_threads"]}'
+echo '{"test": "email check", "ok": true, "first_s": 3.6, "total_s": 7.1, "reply": "Three.", "tools": ["mcp__email__search_email"]}'
+echo '{"test": "web search", "ok": true, "first_s": 2.1, "total_s": 12.4, "reply": "Stocks fell Friday, says Reuters.", "tools": ["WebSearch"]}'
 `)
     chmodSync(python, 0o755)
     gateway = Bun.serve({ port: 18795, hostname: '127.0.0.1', fetch: () => Response.json({ ok: true }) })
@@ -303,8 +304,21 @@ echo '{"test": "email check", "ok": true, "first_s": 3.6, "total_s": 7.1, "reply
     expect(out).not.toContain('hubspot')
     expect(out).toContain('✓ email check: first words after 3.6s, done in 7.1s')
     expect(out).toContain('Claude said: "Three."')
+    expect(out).toContain('✓ web search: first words after 2.1s, done in 12.4s')
+    expect(out).not.toContain('without searching the web')
+    expect(out).toContain('(the voice is LiveKit Inference; put ELEVEN_API_KEY')
+    expect(out).toContain('(no extra email accounts yet')
     expect(out).toContain('1 problem found.')
     expect(code).toBe(1)
+  })
+
+  test('reports the ElevenLabs voice and email accounts without showing keys', async () => {
+    writeFileSync(join(dataDir, 'voice.env'), 'ELEVEN_API_KEY=sk_secret_value\n')
+    writeFileSync(join(dataDir, 'email-accounts.json'), JSON.stringify([{ address: 'me@gmail.com' }, { address: 'me@icloud.com' }]))
+    const { out } = await doctor(['--quick'])
+    expect(out).toContain('✓ the voice is ElevenLabs')
+    expect(out).toContain('✓ email accounts: me@gmail.com, me@icloud.com')
+    expect(out).not.toContain('sk_secret_value')
   })
 
   test('--quick skips the live test', async () => {

@@ -81,7 +81,9 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
         result = await self.session.run(user_input="hello")
         self.assertEqual([r.strip() for r in self.replies(result)], ["Hi there, quick answer."])
         result = await self.session.run(user_input="check my email")
-        self.assertEqual([r.strip() for r in self.replies(result)], ["On it. Checking your inbox."])
+        replies = [r.strip() for r in self.replies(result)]
+        self.assertEqual(len(replies), 1)
+        self.assertTrue(replies[0].endswith(" Checking your inbox."), replies)
         end = time.monotonic() + 5
         while not self.spoken and time.monotonic() < end:
             await asyncio.sleep(0.05)
@@ -92,7 +94,9 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
         saved = {k: os.environ.pop(k, None) for k in keys}
         try:
             config = worker.brain_config("")
-            self.assertEqual((config.lane.model, config.lane.effort), ("opus", "medium"))
+            self.assertEqual((config.lane.model, config.lane.effort), ("opus", "high"))
+            self.assertTrue(config.lane.chrome)
+            self.assertIn("email_mcp.py", Path(config.lane.mcp_config).read_text())
             self.assertEqual((config.talk.model, config.talk.effort, config.talk.talk_only), ("haiku", "low", True))
             self.assertTrue(config.warm_up)
             os.environ["GLASSES_MODEL"] = "sonnet"

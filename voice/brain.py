@@ -47,6 +47,19 @@ LOOK = re.compile(
     re.I,
 )
 
+# Requests that are obviously real work skip the quick voice: no tools, and
+# not the model to trust with anything current or important.
+WORK_HINTS = re.compile(
+    r"\b(?:e-?mails?|inbox|mail|calendar|meetings?|schedule|appointments?|remind(?:er)?s?"
+    r"|news|headlines?|latest|today|tonight|tomorrow|yesterday|this (?:week|month|morning|weekend)"
+    r"|right now|currently|prices?|stocks?|markets?|weather|forecast|scores?"
+    r"|search|look (?:it |that |this )?up|google|find|research|websites?|online|browser|chrome|browse"
+    r"|code|repo|github|deploy|build|fix|bugs?|files?|folders?"
+    r"|send|draft|reply|respond|forward|kiosks?|business|revenue|sales|profits?|margins?|invest\w*"
+    r"|strategy|compare|analy[sz]e|write|create|order|buy|book)\b",
+    re.I,
+)
+
 ACKS = ["On it.", "Let me check.", "One sec.", "Okay, looking into it."]
 HANDOFF = "[work]"
 WARM_UP = "(Automatic warm-up at the start of a call, not from the user. Reply with just: ok)"
@@ -494,6 +507,23 @@ class Brain:
                 image = await look()
             except Exception:
                 log.exception("could not get a picture from the camera")
+
+        if not looked and self.config.talk is not None and WORK_HINTS.search(words):
+            # Straight to the work model; "on it" doesn't need a model to say it.
+            ack = self._pick(ACKS)
+            entry = len(self.history)
+            self._remember("user", words, "")
+            self._remember("assistant", ack, "")
+            self.calls.say("Claude", ack)
+            log.info("straight to the work model")
+            yield ack + " "
+            begun = await self._begin_work(words, None, False, user_entry=entry)
+            if isinstance(begun, str):
+                yield begun
+                return
+            async for piece in self._follow(begun):
+                yield piece
+            return
 
         if not looked:
             talk = await self._free_talk()

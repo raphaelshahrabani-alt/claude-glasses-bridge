@@ -217,7 +217,7 @@ Then, in a new Terminal window:
 start-glasses ~/Desktop ~/Downloads
 ```
 
-That opens two windows: the gateway, and "glasses: voice", where what you say goes straight to Claude Code and its answer is spoken as it's written. A quick model answers small talk right away; anything that matters (code, email, calendar, business) goes to Opus. The first time, the voice window spends about a minute setting itself up; wait for a line containing `registered worker`. Claude Code works in the first folder and can also read and change the others. Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
+That opens two windows: the gateway, and "glasses: voice", where what you say goes straight to Claude Code and its answer is spoken as it's written. A quick model answers small talk right away; anything that matters (code, email, calendar, news, business) goes to Opus, which can search the web, use your Chrome and every email account you add with `glasses-email`. For a natural ElevenLabs voice, see "Direct voice" in the main README. The first time, the voice window spends about a minute setting itself up; wait for a line containing `registered worker`. Claude Code works in the first folder and can also read and change the others. Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
 
 Every call is written down in `~/.claude-glasses-bridge/calls/`, one file per day. To see a call live, run `tail -f ~/.claude-glasses-bridge/calls/$(date +%F).md` in another window.
 

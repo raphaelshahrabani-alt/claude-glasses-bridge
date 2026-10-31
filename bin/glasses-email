@@ -1,0 +1,10 @@
+#!/bin/bash
+# Adds, lists and removes the email accounts the glasses can read and send from.
+#   glasses-email add you@example.com    (asks for the account's app password)
+#   glasses-email list
+#   glasses-email remove you@example.com
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${GLASSES_VOICE_VENV:-${GLASSES_DATA_DIR:-$HOME/.claude-glasses-bridge}/voice-venv}"
+"$root/bin/glasses-voice" --setup
+exec "$venv/bin/python" "$root/voice/email_accounts.py" "$@"

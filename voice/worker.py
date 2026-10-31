@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
 import os
 import re
@@ -120,6 +121,19 @@ def system_prompt_file(persona: str, rules: str = "prompt.md", name: str = "voic
     return str(path)
 
 
+def mcp_config() -> str:
+    """MCP servers the work model gets on top of the user's own: every email account (glasses-email)."""
+    path = DATA_DIR / "voice-mcp.json"
+    config = {"mcpServers": {"email": {
+        "command": sys.executable,
+        "args": [str(HERE / "email_mcp.py")],
+        "env": {"GLASSES_DATA_DIR": str(DATA_DIR)},
+    }}}
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    return str(path)
+
+
 def setting(*names: str, default: str) -> str | None:
     """The first of these environment variables that is set; empty means Claude Code's default."""
     for name in names:
@@ -139,11 +153,13 @@ def brain_config(persona: str) -> BrainConfig:
         cwd=project,
         claude=claude,
         model=setting("GLASSES_WORK_MODEL", "GLASSES_MODEL", default="opus"),
-        effort=setting("GLASSES_WORK_EFFORT", "GLASSES_EFFORT", default="medium"),
+        effort=setting("GLASSES_WORK_EFFORT", "GLASSES_EFFORT", default="high"),
         permission_mode=setting("GLASSES_PERMISSION_MODE", default="auto"),
         add_dirs=env_dirs("GLASSES_ADD_DIRS"),
         system_prompt_file=system_prompt_file(persona),
         use_api_key=use_api_key,
+        chrome=os.environ.get("GLASSES_CHROME", "1") != "0",
+        mcp_config=mcp_config(),
     )
     # A fast model with no tools answers first: small talk and quick facts
     # itself, and "on it" for everything else while the work model starts.
@@ -178,7 +194,19 @@ def make_stt(terms: list[str]):
     return os.environ.get("GLASSES_STT", f"deepgram/nova-3:{language}")
 
 
+# "Eric - smooth, trustworthy", an ElevenLabs voice made for assistants.
+ELEVENLABS_VOICE = "cjVigY5qzO86Huf0OWal"
+
+
 def make_tts():
+    key = os.environ.get("ELEVEN_API_KEY") or os.environ.get("ELEVENLABS_API_KEY")
+    if key:
+        from livekit.plugins import elevenlabs
+
+        options = {"voice_id": os.environ.get("GLASSES_ELEVENLABS_VOICE", ELEVENLABS_VOICE), "api_key": key}
+        if os.environ.get("GLASSES_ELEVENLABS_MODEL"):
+            options["model"] = os.environ["GLASSES_ELEVENLABS_MODEL"]
+        return elevenlabs.TTS(**options)
     if os.environ.get("DEEPGRAM_API_KEY"):
         from livekit.plugins import deepgram
 

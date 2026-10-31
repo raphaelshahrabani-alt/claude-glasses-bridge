@@ -80,7 +80,7 @@ Either way the patched app keeps the glasses camera off during calls. When you a
 
 - **Straight to Claude Code, in two tiers.** Each call starts Claude Code headless (`claude -p` with streaming input and output), and Claude's first sentence is spoken while it is still writing the rest:
   - **The quick voice** (Haiku, no tools, `voice/talk.md`) hears everything first. It answers small talk and quick facts itself. For anything else it says "on it" and hands over.
-  - **The work model** (Opus at medium effort, with your projects, email, calendar and every tool, `voice/prompt.md`) handles everything that matters: code, files, email, calendar, and advice, numbers or decisions about your business. Both get your profile.
+  - **The work model** (Opus at high effort, with your projects, email, calendar, the web, Chrome and every tool, `voice/prompt.md`) handles everything that matters: code, files, email, calendar, news and anything current, and advice, numbers or decisions about your business. Requests that obviously need it (email, news, search, code, your business...) skip the quick voice: you hear "on it" at once and Opus starts. Both get your profile.
 
   In a test with the real Claude Code, after the call's warm-up, the quick voice answered small talk in 1.1 seconds. For a pricing question it said "Sure, one sec." after 1.4 seconds; Opus started its answer at 2.7 and finished at 3.9.
 - **Warm from the first question.** When a call starts, each Claude Code process gets a tiny first message, so your first real question doesn't wait for it to load (`GLASSES_WARM_UP=0` turns it off).
@@ -90,8 +90,19 @@ Either way the patched app keeps the glasses camera off during calls. When you a
 - **Where the chats go.** Every call is written down in `~/.claude-glasses-bridge/calls/<date>.md`. The Claude Code sessions are saved like any other: `cd ~/Desktop && claude --resume` lists them, so you can carry on at the keyboard.
 - **Hanging up doesn't lose work.** Work still running when the call ends gets up to 10 more minutes (`GLASSES_FINISH_AFTER_HANGUP_S`). Its result is told at the start of your next call ("While you were away: ...").
 - **Looking.** "Look at this", "what am I looking at", "read this" and similar turn the glasses camera on for one picture, which goes to Claude Code with your question.
+- **Real answers from the web.** Web search and page fetching are pre-approved. The work model is told to search for anything that can change, never answer it from memory, name its source and how recent it is, and check a second source for anything important. In a test, "what's the latest business news?" ran two searches and came back after 19 seconds with figures attributed to Bloomberg and Fortune.
+- **Your Chrome.** The work model runs with `--chrome`, so it can browse, read logged-in pages, fill forms and click in your own Chrome. It needs the [Claude in Chrome](https://code.claude.com/docs/en/chrome) extension, signed in to your Claude account (check with `/chrome` in Claude Code). `GLASSES_CHROME=0` turns it off.
+- **Every email account.** `bin/glasses-email add you@example.com` adds an account (Gmail, Google Workspace, iCloud, Yahoo, Fastmail, Zoho, or any IMAP and SMTP server) with an app password, which goes in the macOS Keychain. The work model then searches all inboxes at once and reads, drafts and sends from any of them (`voice/email_mcp.py`). Sending always asks "Quick check before I go on: send an email from ... to ..., subject ... Is that okay?", even in auto mode. Microsoft (Outlook, Hotmail) accounts don't allow app passwords, so connect those in Claude Code instead. `glasses-email list` shows the accounts and whether each logs in.
 
-**Speech-to-text and the voice** use [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3 and a Cartesia voice), billed to your LiveKit Cloud project. No other account is needed, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls, and then speech stops working (`glasses-doctor` says so). For more, either upgrade the LiveKit plan, or create a [Deepgram](https://deepgram.com) account (it starts with free credit) and put the key in `~/.claude-glasses-bridge/voice.env`. Speech-to-text and the voice then come from Deepgram directly:
+**A natural voice: ElevenLabs.** Create an API key at [elevenlabs.io](https://elevenlabs.io) (your profile → API Keys, with Text to Speech access) and put it in `~/.claude-glasses-bridge/voice.env`:
+
+```
+ELEVEN_API_KEY=your-key
+```
+
+The default voice is Eric ("smooth, trustworthy", made for assistants). Others that suit a call: Chris `iP95p4xoKVk53GoZ742B` (down to earth), Will `bIHbv24MWmeRgasZH58o` (relaxed), Roger `CwhRBWXzGAHq8TQ4Fs17` (laid back), Jessica `cgSgspJ2msm6clMCkdW9` (warm, female) and River `SAz9YHcvj6GT2YYXdXww` (calm, neutral). Set one with `GLASSES_ELEVENLABS_VOICE=<id>` in `voice.env`. ElevenLabs bills by characters spoken; the free plan covers about 10 minutes a month.
+
+**Speech-to-text and, without ElevenLabs, the voice** use [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3 and a Cartesia voice), billed to your LiveKit Cloud project. No other account is needed, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls, and then speech stops working (`glasses-doctor` says so). For more, either upgrade the LiveKit plan, or create a [Deepgram](https://deepgram.com) account (it starts with free credit) and put the key in `~/.claude-glasses-bridge/voice.env`. Speech-to-text and the voice then come from Deepgram directly:
 
 ```
 DEEPGRAM_API_KEY=your-key
@@ -102,7 +113,11 @@ Other settings that can go in `voice.env` (restart the voice window after changi
 | Variable | Default | |
 | - | - | - |
 | `GLASSES_WORK_MODEL` | `opus` | The model for real work. `sonnet` is faster and uses less of your plan. |
-| `GLASSES_WORK_EFFORT` | `medium` | `high` thinks longer before each step: better on hard problems, slower on a call. |
+| `GLASSES_WORK_EFFORT` | `high` | `medium` answers sooner; `xhigh` and `max` think even longer before each step. |
+| `ELEVEN_API_KEY` | none | Speaks with ElevenLabs. |
+| `GLASSES_ELEVENLABS_VOICE` | Eric | An ElevenLabs voice id. |
+| `GLASSES_ELEVENLABS_MODEL` | the plugin's default | Such as `eleven_flash_v2_5` (fastest). |
+| `GLASSES_CHROME` | on | `0` runs the work model without Claude in Chrome. |
 | `GLASSES_TALK_MODEL` | `haiku` | The quick voice. |
 | `GLASSES_TALK` | on | `0` sends everything straight to the work model. |
 | `GLASSES_WARM_UP` | on | `0` skips the warm-up message when a call starts. |
@@ -144,7 +159,7 @@ It then starts Claude Code exactly as the voice worker does and times the quick 
 
 With the direct voice, an answer starts when speech-to-text notices you stopped talking (about half a second) and Claude Code writes its first words; `glasses-doctor` shows both. What changes the Claude Code part:
 
-- **Models:** the quick voice (Haiku) answers in about a second and says "on it" for real work. Opus then takes a few seconds more. That's the price of the best model; `GLASSES_WORK_MODEL=sonnet` in `voice.env` is quicker, and `GLASSES_WORK_EFFORT=high` is slower but more careful. Opus also uses up your plan's limits faster than Sonnet.
+- **Models:** the quick voice (Haiku) answers in about a second and says "on it" for real work. Opus at high effort then takes a few seconds more, longer when it searches or works through tools. That's the price of the smartest setup; `GLASSES_WORK_EFFORT=medium` or `GLASSES_WORK_MODEL=sonnet` in `voice.env` is quicker. Opus also uses up your plan's limits faster than Sonnet.
 - **First questions about a project:** Claude Code has to read around a project it doesn't know yet, which is slow. Run `/init` once in each project to give it a `CLAUDE.md` it reads up front.
 - **Long sessions:** a session that runs all day gets slower as its context grows. Calls more than 30 minutes apart start fresh; lower `GLASSES_RESUME_MINUTES` to start fresh more often.
 - **Hooks and plugins:** anything that runs on every prompt or tool call, such as a memory plugin, adds its time to every answer. If the doctor's times are high, try with them turned off in `/plugin`.

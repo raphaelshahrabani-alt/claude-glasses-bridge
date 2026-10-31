@@ -36,6 +36,19 @@ READ_ONLY_TOOLS = [
     f"mcp__{server}__{tool}"
     for server in ("plugin_small-business_google-drive", "claude_ai_Google_Drive", "Google_Drive")
     for tool in ("search_files", "read_file_content", "get_file_metadata", "list_recent_files")
+] + [
+    # glasses-email (email_mcp.py): everything but sending
+    f"mcp__email__{tool}" for tool in ("list_accounts", "search_email", "read_email", "mark_read", "draft_email")
+] + ["WebSearch", "WebFetch"]
+
+
+# Acting in the user's name always gets a spoken "is that okay?", whatever the
+# permission mode: auto mode alone would let a request that merely claims the
+# user agreed go through.
+ALWAYS_ASK = ["mcp__email__send_email"] + [
+    f"mcp__{server}__{tool}"
+    for server in ("claude_ai_Gmail", "Gmail")
+    for tool in ("send_message", "reply", "forward", "send_draft")
 ]
 
 
@@ -49,6 +62,7 @@ class LaneConfig:
     add_dirs: list[str] = field(default_factory=list)
     system_prompt_file: str | None = None
     allowed_tools: list[str] = field(default_factory=lambda: list(READ_ONLY_TOOLS))
+    ask_tools: list[str] = field(default_factory=lambda: list(ALWAYS_ASK))
     resume: str | None = None
     env: dict[str, str] | None = None
     # With ANTHROPIC_API_KEY in the environment, `claude -p` always bills that
@@ -57,6 +71,10 @@ class LaneConfig:
     # The quick voice up front: no tools, no connectors, and its own short
     # system prompt instead of Claude Code's, so it answers fast.
     talk_only: bool = False
+    # Claude in Chrome: browse and act in the user's own Chrome.
+    chrome: bool = False
+    # More MCP servers (such as glasses-email), on top of the user's own.
+    mcp_config: str | None = None
 
     def command(self) -> list[str]:
         cmd = [
@@ -81,10 +99,16 @@ class LaneConfig:
             return cmd + (["--resume", self.resume] if self.resume else [])
         for d in self.add_dirs:
             cmd += ["--add-dir", d]
+        if self.chrome:
+            cmd += ["--chrome"]
+        if self.mcp_config:
+            cmd += ["--mcp-config", self.mcp_config]
         if self.system_prompt_file:
             cmd += ["--append-system-prompt-file", self.system_prompt_file]
         if self.allowed_tools:
             cmd += ["--allowedTools", ",".join(self.allowed_tools)]
+        if self.ask_tools:
+            cmd += ["--settings", json.dumps({"permissions": {"ask": self.ask_tools}})]
         if self.resume:
             cmd += ["--resume", self.resume]
         return cmd
@@ -115,12 +139,20 @@ class Permission:
 
     def spoken(self) -> str:
         """What to ask the user, in a few words."""
+        tool = self.tool_name.split("__")[-1]
+        get = lambda key: str(self.input.get(key) or "").strip()  # noqa: E731
+        if tool in ("send_email", "send_message", "reply", "forward") and get("to"):
+            sender = get("from_account")
+            what = f"send an email{' from ' + sender if sender else ''} to {get('to')}"
+            if get("subject"):
+                what += f", subject: {get('subject')[:80]}"
+            return what
         what = self.description.strip().rstrip(".")
         if not what:
-            command = self.input.get("command") or self.input.get("file_path") or ""
-            what = f"use {self.tool_name.split('__')[-1].replace('_', ' ')}"
-            if isinstance(command, str) and command:
-                what += f": {command[:80]}"
+            detail = get("command") or get("file_path") or get("url") or get("text")
+            what = f"use {tool.replace('_', ' ')}"
+            if detail:
+                what += f": {detail[:80]}"
         return what
 
 

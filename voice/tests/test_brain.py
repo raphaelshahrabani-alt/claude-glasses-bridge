@@ -14,7 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from brain import API_ERRORS, Brain, BrainConfig, CallLog, wants_look, yes_no  # noqa: E402
+from brain import ACKS, API_ERRORS, WORK_HINTS, Brain, BrainConfig, CallLog, wants_look, yes_no  # noqa: E402
 from claude_lane import LaneConfig, Permission  # noqa: E402
 
 FAKE = str(HERE / "fake_claude.py")
@@ -277,27 +277,42 @@ class QuickVoiceTest(BrainBase):
         self.assertEqual(len(talk), 1)
         self.assertEqual(work, [])
 
-    async def test_real_work_goes_to_the_work_model(self):
+    def assertAcked(self, reply, rest):
+        ack = reply[: len(reply) - len(rest)].strip()
+        self.assertTrue(reply.endswith(rest), reply)
+        self.assertIn(ack, ACKS)
+
+    async def test_obvious_work_skips_the_quick_voice(self):
         brain = await self.brain()
-        self.assertEqual(await self.ask(brain, "check my email"), "On it. Checking your inbox.")
+        self.assertAcked(await self.ask(brain, "check my email"), " Checking your inbox.")
         self.assertTrue(await until(lambda: self.spoken))
         self.assertEqual(self.spoken, ["Your inbox: two emails need you."])
         talk, work = self.by_lane()
+        self.assertEqual(talk, [])
         self.assertEqual(len(work), 1)
         self.assertIn("already heard a quick", work[0]["value"])
         # the user's words aren't repeated as background
         self.assertNotIn("User: check my email", work[0]["value"])
         argv = [r["value"] for r in self.fake_log("argv") if "--strict-mcp-config" not in r["value"]][0]
         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
-        # the quick voice hears what the work model said
+        # the quick voice hears what happened
         await self.ask(brain, "thanks")
         talk, _ = self.by_lane()
+        self.assertIn("User: check my email", talk[-1]["value"])
         self.assertIn("Your inbox: two emails need you.", talk[-1]["value"])
+
+    async def test_the_quick_voice_hands_over_what_it_cannot_do(self):
+        os.environ["FAKE_LONG_S"] = "0.5"
+        brain = await self.brain()
+        self.assertEqual(await self.ask(brain, "do the long thing"), "On it. Starting the long task.")
+        talk, work = self.by_lane()
+        self.assertEqual((len(talk), len(work)), (1, 1))
+        self.assertTrue(await until(lambda: "Finished the long task." in self.spoken))
 
     async def test_advice_without_tools_streams_straight_through(self):
         brain = await self.brain()
         reply = await self.ask(brain, "a business question about my prices")
-        self.assertEqual(reply, "On it. Raise it to six dollars, your margins can take it.")
+        self.assertAcked(reply, " Raise it to six dollars, your margins can take it.")
         self.assertEqual(self.spoken, [])
 
     async def test_a_stuck_quick_voice_hands_over(self):
@@ -334,11 +349,37 @@ class WordsTest(unittest.TestCase):
             self.assertIs(yes_no(words), False, words)
         self.assertIsNone(yes_no("what's on my calendar"))
 
+    def test_work_hints(self):
+        for words in ["what's the latest business news", "check my email", "what's on my calendar tomorrow",
+                      "search for kiosk suppliers", "how much is a Tesla share right now", "fix the login bug"]:
+            self.assertTrue(WORK_HINTS.search(words), words)
+        for words in ["hey how's it going", "thanks man", "what's the capital of Portugal", "tell me a joke"]:
+            self.assertFalse(WORK_HINTS.search(words), words)
+
     def test_look(self):
         for words in ["look at this", "What am I looking at?", "can you read this", "what's this"]:
             self.assertTrue(wants_look(words), words)
         for words in ["I see", "let's see what's next", "check my email"]:
             self.assertFalse(wants_look(words), words)
+
+    def test_work_model_flags(self):
+        cmd = LaneConfig(cwd="/x", chrome=True, mcp_config="/data/voice-mcp.json").command()
+        self.assertIn("--chrome", cmd)
+        self.assertEqual(cmd[cmd.index("--mcp-config") + 1], "/data/voice-mcp.json")
+        allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
+        self.assertIn("WebSearch", allowed)
+        self.assertIn("mcp__email__search_email", allowed)
+        self.assertNotIn("mcp__email__send_email", allowed)
+        ask = json.loads(cmd[cmd.index("--settings") + 1])["permissions"]["ask"]
+        self.assertIn("mcp__email__send_email", ask)
+        self.assertIn("mcp__claude_ai_Gmail__send_message", ask)
+        quick = LaneConfig(cwd="/x", chrome=True, talk_only=True).command()
+        self.assertNotIn("--chrome", quick)
+
+    def test_send_wording(self):
+        p = Permission("r", "mcp__email__send_email",
+                       {"from_account": "me@icloud.com", "to": "sam@example.com", "subject": "Kiosk delivery"}, "")
+        self.assertEqual(p.spoken(), "send an email from me@icloud.com to sam@example.com, subject: Kiosk delivery")
 
     def test_permission_wording(self):
         p = Permission("r", "Bash", {"command": "git push"}, "")

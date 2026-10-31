@@ -81,12 +81,19 @@ if pgrep -f "main.py start" >/dev/null 2>&1; then
 fi
 
 work_model="${GLASSES_WORK_MODEL:-${GLASSES_MODEL:-opus}}"
-work_effort="${GLASSES_WORK_EFFORT:-${GLASSES_EFFORT:-medium}}"
+work_effort="${GLASSES_WORK_EFFORT:-${GLASSES_EFFORT:-high}}"
 echo "glasses-voice: Claude Code works in ${GLASSES_PROJECT:-$HOME/Desktop}"
 if [[ "${GLASSES_TALK:-1}" == 0 ]]; then
   echo "glasses-voice: everything on $work_model (effort $work_effort)"
 else
   echo "glasses-voice: quick answers on ${GLASSES_TALK_MODEL:-haiku}, real work on $work_model (effort $work_effort)"
+fi
+if [[ -n "${ELEVEN_API_KEY:-${ELEVENLABS_API_KEY:-}}" ]]; then
+  echo "glasses-voice: voice: ElevenLabs"
+elif [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
+  echo "glasses-voice: voice: Deepgram"
+else
+  echo "glasses-voice: voice: LiveKit Inference (put ELEVEN_API_KEY=... in $data_dir/voice.env for ElevenLabs)"
 fi
 echo "glasses-voice: calls are written to $data_dir/calls/"
 exec "$venv/bin/python" "$root/voice/worker.py" start

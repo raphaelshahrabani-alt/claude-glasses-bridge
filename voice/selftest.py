@@ -25,8 +25,13 @@ WORK_TESTS = [
     ("simple question", "Health check from glasses-doctor: reply with just the word OK."),
     (
         "email check",
-        "Health check from glasses-doctor: check my Gmail for unread emails from the last day and reply "
-        "with just how many there are. Don't open any of them.",
+        "Health check from glasses-doctor: count my unread emails from the last day, in every account I have, "
+        "and reply with just the count per account. Don't open any of them.",
+    ),
+    (
+        "web search",
+        "Health check from glasses-doctor: search the web for one top business headline from today, then "
+        "reply in one sentence and name the source.",
     ),
 ]
 
