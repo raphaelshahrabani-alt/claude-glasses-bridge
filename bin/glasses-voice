@@ -1,0 +1,85 @@
+#!/bin/bash
+# The direct voice worker: the glasses' mic goes through speech-to-text
+# straight to Claude Code, and Claude's answer is spoken as it is written.
+# It replaces VisionClaw's Gemini worker, so it stops that one if it's running.
+#
+#   glasses-voice           start (sets up its Python environment the first time)
+#   glasses-voice --setup   only set up or update the Python environment
+#
+# The LiveKit keys come from VisionClaw's gateway/.env. Settings and other keys
+# (GLASSES_MODEL, DEEPGRAM_API_KEY, ...) can go in ~/.claude-glasses-bridge/voice.env.
+# start-glasses passes the project folders as GLASSES_PROJECT and GLASSES_ADD_DIRS.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+data_dir="${GLASSES_DATA_DIR:-$HOME/.claude-glasses-bridge}"
+venv="${GLASSES_VOICE_VENV:-$data_dir/voice-venv}"
+visionclaw="${VISIONCLAW_DIR:-$HOME/VisionClaw}"
+requirements="$root/voice/requirements.txt"
+
+die() {
+  echo "glasses-voice: $*" >&2
+  exit 1
+}
+
+find_python() {
+  local candidate
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 &&
+      "$candidate" -c 'import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)' 2>/dev/null; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+setup() {
+  local stamp="$venv/.requirements" python
+  if [[ -x "$venv/bin/python" && -f "$stamp" ]] && cmp -s "$requirements" "$stamp"; then
+    return 0
+  fi
+  python="$(find_python)" || die "needs Python 3.10 to 3.14 (install it with: brew install python@3.13)"
+  echo "glasses-voice: setting up the voice worker's Python environment (one time, about a minute)..."
+  mkdir -p "$data_dir"
+  [[ -x "$venv/bin/python" ]] || "$python" -m venv "$venv"
+  "$venv/bin/python" -m pip install --quiet --upgrade pip
+  "$venv/bin/python" -m pip install --quiet -r "$requirements"
+  cp "$requirements" "$stamp"
+  echo "glasses-voice: ready"
+}
+
+# KEY=value lines from a file, without running it as a script.
+load_env() {
+  local file="$1" only="${2:-}" line key value
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    [[ -z "$only" || "$key" =~ $only ]] || continue
+    [[ -n "${!key:-}" ]] && continue
+    value="${value%$'\r'}"
+    if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
+    export "$key=$value"
+  done < "$file"
+}
+
+setup
+[[ "${1:-}" == "--setup" ]] && exit 0
+
+load_env "$data_dir/voice.env"
+load_env "$visionclaw/gateway/.env" '^LIVEKIT_(URL|API_KEY|API_SECRET)$'
+[[ -n "${LIVEKIT_URL:-}" && -n "${LIVEKIT_API_KEY:-}" && -n "${LIVEKIT_API_SECRET:-}" ]] ||
+  die "no LiveKit keys: expected LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET in $visionclaw/gateway/.env"
+command -v "${CLAUDE_BIN:-claude}" >/dev/null || die "claude is not on your PATH"
+
+# Two workers in the same LiveKit project would both answer every call.
+if pgrep -f "main.py start" >/dev/null 2>&1; then
+  echo "glasses-voice: stopping VisionClaw's Gemini voice worker, this one replaces it"
+  pkill -f "main.py start" || true
+fi
+
+echo "glasses-voice: Claude Code works in ${GLASSES_PROJECT:-$HOME/Desktop} (${GLASSES_MODEL:-sonnet}, effort ${GLASSES_EFFORT:-low})"
+echo "glasses-voice: calls are written to $data_dir/calls/"
+exec "$venv/bin/python" "$root/voice/worker.py" start

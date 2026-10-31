@@ -205,7 +205,7 @@ Ray-Ban Meta Gen 3 works (tested October 2026 with MetaWearablesDAT 0.9.0), even
 
 ## Every time after setup
 
-One command opens everything in its own Terminal window: the gateway, the voice worker (which also keeps the Mac awake), and Claude Code with the glasses channel. Pieces that are already running are left alone. Add a shortcut once:
+One command opens everything in its own Terminal window and leaves pieces that are already running alone. Add a shortcut once:
 
 ```bash
 echo "alias start-glasses='~/claude-glasses-bridge/bin/start-glasses'" >> ~/.zshrc
@@ -214,18 +214,20 @@ echo "alias start-glasses='~/claude-glasses-bridge/bin/start-glasses'" >> ~/.zsh
 Then, in a new Terminal window:
 
 ```bash
-start-glasses ~/Desktop/poker-tracker ~/Desktop/another-project
+start-glasses ~/Desktop ~/Downloads
 ```
 
-To make it your personal agent and business partner, see "A personal agent and business partner" in the main README: a profile file, and signing in to Gmail and Calendar once with `/mcp`.
+That opens two windows: the gateway, and "glasses: voice", where what you say goes straight to Claude Code and its answer is spoken as it's written. The first time, the voice window spends about a minute setting itself up; wait for a line containing `registered worker`. Claude Code works in the first folder and can also read and change the others. Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
 
-Claude Code works in the first folder and can also read and change the others. List every project you want to ask about: a project left off the list makes Claude stop and ask for permission on the Mac's screen, and the glasses call just waits.
+Every call is written down in `~/.claude-glasses-bridge/calls/`, one file per day. To see a call live, run `tail -f ~/.claude-glasses-bridge/calls/$(date +%F).md` in another window.
 
-In the Claude Code window, choose "I am using this for local development". Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
+To make it your personal agent and business partner, see "A personal agent and business partner" in the main README: a profile file, and signing in to Gmail and Calendar once with `/mcp`. For what the direct voice can do (talk while it works, approve by voice, look through the camera) and its settings, see "Direct voice" there.
 
-`start-glasses` runs Claude Code on Sonnet at low effort with auto permissions, so answers come back quickly. Set `GLASSES_MODEL=opus`, `GLASSES_EFFORT=high` or `GLASSES_PERMISSION_MODE=manual` to change that. It also starts the worker with `CLAUDE_CODE_ONLY=1`. The voice model then holds the conversation and answers chat, general knowledge and web facts itself, and sends anything about your code or computer to Claude Code. Long jobs get a quick "starting that now" and a follow-up when they're done, read out during the call, so you can keep talking in the meantime. VisionClaw's `execute` and `browse` tools, which need keys this setup doesn't have, are left out.
+The direct voice uses LiveKit Inference for speech-to-text and the voice. LiveKit's free plan covers about 50 minutes of calls a month; for more, add a Deepgram key as the README explains.
 
-To check everything, run `~/claude-glasses-bridge/bin/glasses-doctor`. It marks each piece ✓ or ✗ with the fix, and times two live questions to Claude Code.
+To go back to the Gemini voice, which hands requests to a separate Claude Code window through the glasses channel, run `GLASSES_VOICE=gemini start-glasses ~/Desktop ~/Downloads`. In its Claude Code window, choose "I am using this for local development".
+
+To check everything, run `~/claude-glasses-bridge/bin/glasses-doctor`. It marks each piece ✓ or ✗ with the fix, and times Claude Code on a plain question and a Gmail check.
 
 **The glasses camera is off by default.** Glasses calls are voice only. When you ask about something in front of you ("look at this", "what's on my screen?"), the worker turns the glasses camera on, takes one picture for Claude Code, and turns it off again, so the capture light comes on for a few seconds instead of the whole call. To stream the camera for the whole call as VisionClaw normally does, set `glassesCameraOnDemand` to false in `SettingsManager.swift`.
 

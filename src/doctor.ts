@@ -97,3 +97,48 @@ export function claudeLaunch(command: string): ClaudeLaunch {
     addDirs,
   }
 }
+
+export interface VoiceStats {
+  /** Seconds from the user finishing a sentence to Claude's first words, oldest first. */
+  firstWords: number[]
+  /** Seconds until each request was done, and how many tool calls it took. */
+  done: { s: number; tools: number }[]
+  calls: number
+  lastCall?: string
+  errors: string[]
+  creditsOut: boolean
+  /** Times Claude Code quit unexpectedly. */
+  crashes: number
+  /** The connectors the most recent Claude Code start could not connect. */
+  notConnected: string[]
+}
+
+const VOICE_LINE_RE = /^(\S+ \S+) \[\d+\] (.*)$/
+
+/** Reads ~/.claude-glasses-bridge/voice.log, written by voice/worker.py. */
+export function parseVoiceLog(text: string): VoiceStats {
+  const stats: VoiceStats = { firstWords: [], done: [], calls: 0, errors: [], creditsOut: false, crashes: 0, notConnected: [] }
+  for (const line of text.split('\n')) {
+    const parsed = VOICE_LINE_RE.exec(line)
+    if (!parsed) continue
+    const [, at, msg] = parsed
+    let m: RegExpExecArray | null
+    if ((m = /: first words after ([\d.]+)s$/.exec(msg))) stats.firstWords.push(Number(m[1]))
+    else if ((m = /: done after ([\d.]+)s, (\d+) tool call/.exec(msg))) stats.done.push({ s: Number(m[1]), tools: Number(m[2]) })
+    else if (msg.startsWith('call started in room')) {
+      stats.calls++
+      stats.lastCall = at
+    } else if ((m = /^voice error \(([^)]*)\): (.*)$/.exec(msg))) stats.errors.push(`${at}  ${m[1]}: ${m[2]}`.slice(0, 220))
+    else if (msg.includes('out of free credits')) stats.creditsOut = true
+    else if ((m = /: claude exited with code (-?\d+)$/.exec(msg)) && ![0, -15, -9, 143, 137].includes(Number(m[1]))) stats.crashes++
+    else if ((m = /: connectors not connected: (.*)$/.exec(msg))) stats.notConnected = m[1].split(', ')
+  }
+  return stats
+}
+
+/** How long the user waits for the first words of an answer on a call. */
+export function firstWordsVerdict(s: number): string {
+  if (s < 3.5) return 'good'
+  if (s < 6) return 'slow'
+  return 'very slow'
+}

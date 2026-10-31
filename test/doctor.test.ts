@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { claudeLaunch, elapsedSeconds, median, parseBridgeLog, patchState, verdict } from '../src/doctor.ts'
+import { claudeLaunch, elapsedSeconds, firstWordsVerdict, parseVoiceLog, median, parseBridgeLog, patchState, verdict } from '../src/doctor.ts'
 
 const root = join(import.meta.dir, '..')
 
@@ -71,6 +71,36 @@ describe('helpers', () => {
   })
 })
 
+describe('parseVoiceLog', () => {
+  test('collects timings, errors and connector problems', () => {
+    const log = [
+      '2026-10-31 14:00:01,000 [10] call started in room room-1',
+      '2026-10-31 14:00:05,100 [10] line 1: first words after 2.1s',
+      '2026-10-31 14:00:05,300 [10] line 1: done after 2.4s, 0 tool call(s)',
+      '2026-10-31 14:01:00,000 [10] line 1: connectors not connected: plugin:small-business:gmail, plugin:small-business:hubspot',
+      '2026-10-31 14:01:05,100 [10] line 1: first words after 3.9s',
+      '2026-10-31 14:01:12,300 [10] line 1: done after 11.0s, 3 tool call(s)',
+      '2026-10-31 14:02:00,000 [10] voice error (tts): 429 Too Many Requests',
+      '2026-10-31 14:02:00,001 [10] LiveKit Inference may be out of free credits. Put a Deepgram key in ...',
+      '2026-10-31 14:03:00,000 [10] line 2: claude exited with code 1',
+      '2026-10-31 14:03:01,000 [10] line 1: claude exited with code 0',
+      'not a log line',
+    ].join('\n')
+    const stats = parseVoiceLog(log)
+    expect(stats.firstWords).toEqual([2.1, 3.9])
+    expect(stats.done).toEqual([{ s: 2.4, tools: 0 }, { s: 11, tools: 3 }])
+    expect(stats.calls).toBe(1)
+    expect(stats.lastCall).toBe('2026-10-31 14:00:01,000')
+    expect(stats.errors).toEqual(['2026-10-31 14:02:00,000  tts: 429 Too Many Requests'])
+    expect(stats.creditsOut).toBe(true)
+    expect(stats.crashes).toBe(1)
+    expect(stats.notConnected).toEqual(['plugin:small-business:gmail', 'plugin:small-business:hubspot'])
+    expect(firstWordsVerdict(2.1)).toBe('good')
+    expect(firstWordsVerdict(4)).toBe('slow')
+    expect(firstWordsVerdict(9)).toBe('very slow')
+  })
+})
+
 describe('glasses-doctor end to end', () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'doctor-'))
   const visionclaw = join(dataDir, 'VisionClaw')
@@ -82,6 +112,9 @@ describe('glasses-doctor end to end', () => {
     GLASSES_DATA_DIR: dataDir,
     GLASSES_WAIT_S: '5',
     GLASSES_LISTEN: 'always',
+    GLASSES_VOICE: 'gemini',
+    // a real voice worker on this machine is none of this test's business
+    GLASSES_VOICE_MATCH: 'no-such-voice-worker-for-doctor-test',
   }
   const claude = new Client({ name: 'fake-claude-code', version: '0' })
   let gateway: ReturnType<typeof Bun.serve>
@@ -168,5 +201,88 @@ describe('glasses-doctor end to end', () => {
     expect(out).toContain("✗ Claude Code with the glasses channel isn't running")
     expect(out).toContain('run start-glasses')
     expect(out).toContain("✗ VisionClaw's gateway isn't answering")
+  })
+})
+
+describe('glasses-doctor with the direct voice worker', () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'doctor-direct-'))
+  const visionclaw = join(dataDir, 'VisionClaw')
+  const python = join(dataDir, 'fake-python')
+  let gateway: ReturnType<typeof Bun.serve>
+  let worker: ReturnType<typeof Bun.spawn>
+  const today = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`
+
+  beforeAll(() => {
+    mkdirSync(join(visionclaw, 'gateway'), { recursive: true })
+    writeFileSync(join(visionclaw, 'gateway', '.env'), 'LIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY=k\nLIVEKIT_API_SECRET=s\n')
+    mkdirSync(join(dataDir, 'calls'))
+    writeFileSync(join(dataDir, 'calls', `${day}.md`), '\n## Call at 14:00\n\n14:00:02  You: check my email\n14:00:04  Claude: Checking your inbox.\n')
+    writeFileSync(join(dataDir, 'voice.log'), [
+      '2026-10-31 14:00:01,000 [10] call started in room room-1',
+      '2026-10-31 14:00:04,100 [10] line 1: first words after 2.2s',
+      '2026-10-31 14:00:09,300 [10] line 1: done after 7.4s, 2 tool call(s)',
+    ].join('\n'))
+    // stands in for the voice worker's Python running voice/selftest.py
+    writeFileSync(python, `#!/bin/bash
+echo '{"test": "startup", "ok": true, "total_s": 0.8, "model": "sonnet", "effort": "low", "cwd": "/Users/me/Desktop"}'
+echo '{"test": "simple question", "ok": true, "first_s": 2.4, "total_s": 2.5, "reply": "OK", "tools": [], "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth", "plugin:small-business:hubspot": "failed"}}'
+echo '{"test": "email check", "ok": true, "first_s": 2.6, "total_s": 5.1, "reply": "Three.", "tools": ["mcp__gmail__search_threads"]}'
+`)
+    chmodSync(python, 0o755)
+    gateway = Bun.serve({ port: 18795, hostname: '127.0.0.1', fetch: () => Response.json({ ok: true }) })
+    worker = Bun.spawn(['bash', '-c', 'exec -a "python doctor-test-voice-worker" sleep 30'])
+  })
+
+  afterAll(() => {
+    gateway.stop(true)
+    worker.kill()
+  })
+
+  async function doctor(args: string[] = []) {
+    const proc = Bun.spawn([process.execPath, join(root, 'scripts', 'doctor.ts'), ...args], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: dataDir,
+        GLASSES_TOKEN: 'doctor-token-0123456789',
+        GLASSES_DATA_DIR: dataDir,
+        GLASSES_VOICE: 'direct',
+        GLASSES_VOICE_MATCH: 'doctor-test-voice-worker',
+        GLASSES_VOICE_PYTHON: python,
+        VISIONCLAW_DIR: visionclaw,
+        GATEWAY_URL: 'http://127.0.0.1:18795',
+      },
+      stdout: 'pipe',
+    })
+    const out = await new Response(proc.stdout).text()
+    return { code: await proc.exited, out }
+  }
+
+  test('checks the worker, recent calls and times Claude Code', async () => {
+    const { code, out } = await doctor()
+    expect(out).toContain('direct voice: you talk straight to Claude Code')
+    expect(out).toContain("✓ VisionClaw's gateway is running")
+    expect(out).toContain('✓ the voice worker is running the current code')
+    expect(out).toContain("✓ the LiveKit keys are in VisionClaw's gateway/.env")
+    expect(out).toContain('(no profile yet')
+    expect(out).toContain('✓ first words after 2.2s (median of the last 1 answer)')
+    expect(out).toContain('requests were done after 7.4s on median; 1 of 1 used tools')
+    expect(out).toContain('14:00:04  Claude: Checking your inbox.')
+    expect(out).toContain('✓ Claude Code started in 0.8s (sonnet, effort low, in /Users/me/Desktop)')
+    expect(out).toContain('✓ simple question: first words after 2.4s, done in 2.5s')
+    expect(out).toContain('✓ plugin:small-business:gmail is connected')
+    expect(out).toContain('✗ plugin:small-business:google-calendar is needs-auth')
+    expect(out).not.toContain('hubspot')
+    expect(out).toContain('✓ email check: first words after 2.6s, done in 5.1s')
+    expect(out).toContain('Claude said: "Three."')
+    expect(out).toContain('1 problem found.')
+    expect(code).toBe(1)
+  })
+
+  test('--quick skips the live test', async () => {
+    const { out } = await doctor(['--quick'])
+    expect(out).not.toContain('Live test')
+    expect(out).toContain('Everything is connected.')
   })
 })

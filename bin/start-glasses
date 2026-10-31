@@ -1,27 +1,29 @@
 #!/bin/bash
-# Starts everything the glasses need, each in its own Terminal window:
-# VisionClaw's gateway, its voice worker, and a Claude Code session with the
-# glasses channel. Pieces that are already running are left alone.
+# Starts everything the glasses need, each in its own Terminal window. Pieces
+# that are already running are left alone.
 #
 #   start-glasses [project-folder] [more-folders...]
 #
 # Claude Code works in the first folder (default: the current one) and may also
-# read and edit the others; without them, asking about another project stalls
-# on a permission prompt nobody can see from the glasses.
+# read and edit the others.
 #
-# Voice answers are only as fast as the model behind them, so Claude Code
-# starts on a quick model at low effort. Override with GLASSES_MODEL,
-# GLASSES_EFFORT and GLASSES_PERMISSION_MODE. Permission prompts that do come
-# up are read out on the glasses to approve by voice; GLASSES_PERMISSION_RELAY=0
-# turns that off.
+# By default the voice is direct: VisionClaw's gateway (the phone logs in
+# through it) and glasses-voice, where speech-to-text goes straight to Claude
+# Code and its answer is spoken as it is written. GLASSES_VOICE=gemini starts
+# the older setup instead: VisionClaw's Gemini worker, which hands requests to
+# a separate Claude Code session through the glasses channel.
 #
-# If ~/.claude-glasses-bridge/persona.md exists (start from
+# Claude Code starts on a quick model at low effort. Override with
+# GLASSES_MODEL, GLASSES_EFFORT and GLASSES_PERMISSION_MODE. If
+# ~/.claude-glasses-bridge/persona.md exists (start from
 # templates/business-partner.md), Claude Code loads it as extra instructions:
 # who you are, your projects, and what it must check with you first.
 # GLASSES_PERSONA points at a different file.
 set -euo pipefail
 
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 visionclaw="${VISIONCLAW_DIR:-$HOME/VisionClaw}"
+voice="${GLASSES_VOICE:-direct}"
 project="$(cd "${1:-$PWD}" && pwd)"
 if [[ $# -gt 0 ]]; then shift; fi
 extra_dirs=()
@@ -58,8 +60,11 @@ end run
 OSA
 }
 
+[[ "$voice" == direct || "$voice" == gemini ]] || die "GLASSES_VOICE must be direct or gemini, not $voice"
 [[ -d "$visionclaw/gateway" ]] || die "no VisionClaw checkout at $visionclaw (set VISIONCLAW_DIR)"
-[[ -x "$visionclaw/agent/start.sh" ]] || die "missing $visionclaw/agent/start.sh (see integrations/visionclaw/IPHONE.md, step 5)"
+if [[ "$voice" == gemini ]]; then
+  [[ -x "$visionclaw/agent/start.sh" ]] || die "missing $visionclaw/agent/start.sh (see integrations/visionclaw/IPHONE.md, step 5)"
+fi
 command -v claude >/dev/null || die "claude is not on your PATH"
 
 if listening 8788; then
@@ -67,6 +72,37 @@ if listening 8788; then
 else
   open_window "glasses: gateway" "$(printf 'cd %q && npm run dev' "$visionclaw/gateway")"
   echo "gateway: started"
+fi
+
+if [[ "$voice" == direct ]]; then
+  if pgrep -f "voice/worker.py start" >/dev/null; then
+    echo "voice:   already running"
+  else
+    # Settings travel on the command line: the new window doesn't inherit this shell's environment.
+    voice_cmd="$(printf 'GLASSES_PROJECT=%q GLASSES_MODEL=%q GLASSES_EFFORT=%q GLASSES_PERMISSION_MODE=%q' \
+      "$project" "$model" "$effort" "$permission_mode")"
+    if [[ -n "${extra_dirs[*]+set}" ]]; then
+      joined="$(IFS=:; echo "${extra_dirs[*]}")"
+      voice_cmd+="$(printf ' GLASSES_ADD_DIRS=%q' "$joined")"
+    fi
+    if [[ -n "${GLASSES_PERSONA:-}" ]]; then voice_cmd+="$(printf ' GLASSES_PERSONA=%q' "$persona")"; fi
+    if [[ -n "${GLASSES_DATA_DIR:-}" ]]; then voice_cmd+="$(printf ' GLASSES_DATA_DIR=%q' "$data_dir")"; fi
+    # caffeinate keeps the Mac awake while it runs.
+    voice_cmd+="$(printf ' caffeinate -dims %q' "$root/bin/glasses-voice")"
+    open_window "glasses: voice" "$voice_cmd"
+    echo "voice:   started: you talk straight to Claude Code in $project ($model, effort $effort)"
+    for dir in ${extra_dirs[@]+"${extra_dirs[@]}"}; do
+      echo "         also has access to $dir"
+    done
+    if [[ -f "$persona" ]]; then echo "         with your profile from $persona"; fi
+    echo "         calls are written down in $data_dir/calls/"
+  fi
+  exit 0
+fi
+
+if pgrep -f "voice/worker.py start" >/dev/null; then
+  echo "voice:   stopping the direct voice worker, the Gemini worker replaces it"
+  pkill -f "voice/worker.py start" || true
 fi
 
 if pgrep -f "main.py start" >/dev/null; then

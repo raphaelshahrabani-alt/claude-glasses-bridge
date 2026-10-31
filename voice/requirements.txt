@@ -1,0 +1,1 @@
+livekit-agents[images,deepgram]==1.8.10
