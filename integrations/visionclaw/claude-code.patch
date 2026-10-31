@@ -1,8 +1,8 @@
 diff --git a/agent/main.py b/agent/main.py
-index 5d3659e..03c7e4a 100644
+index 5d3659e..30f78a3 100644
 --- a/agent/main.py
 +++ b/agent/main.py
-@@ -365,6 +365,60 @@ BROWSE_KEEPALIVE_S = 90
+@@ -365,6 +365,74 @@ BROWSE_KEEPALIVE_S = 90
  # instruction blob for a voice model, not an answer, so never relay it as one.
  GATEWAY_DEFERRAL_PREFIX = "[task started]"
  
@@ -12,12 +12,20 @@ index 5d3659e..03c7e4a 100644
 +# the gateway, including the GATEWAY_DEFERRAL_PREFIX for long tasks.
 +CLAUDE_CODE_URL = os.environ.get("CLAUDE_CODE_URL", "").rstrip("/")
 +
-+# CLAUDE_CODE_ONLY=1 makes the voice model a thin voice for Claude Code: its own
-+# instructions and tools are replaced by claude_code plus quick_search. Without
-+# it, the voice model answered most questions itself and knew nothing of the
-+# user's projects; and without Anthropic or browser keys behind the gateway,
-+# execute and browse can only fail after the model has promised a result.
++# CLAUDE_CODE_ONLY=1 pairs the voice model with Claude Code: the voice model
++# holds the conversation and answers what it is sure of, and everything about
++# the user's code and computer goes to Claude Code. Its own instructions and
++# tools are replaced by claude_code plus quick_search. Without it, the voice
++# model answered questions about the user's projects itself and got them wrong;
++# and without Anthropic or browser keys behind the gateway, execute and browse
++# can only fail after the model has promised a result.
 +CLAUDE_CODE_ONLY = bool(CLAUDE_CODE_URL) and os.environ.get("CLAUDE_CODE_ONLY") == "1"
++
++# How long a claude_code call holds the voice model's turn before the answer is
++# demoted to a follow-up. Shorter than QUICK_ANSWER_S: Claude Code says when it
++# starts a long job, and holding the turn is what stops the user from talking
++# about something else in the meantime.
++CLAUDE_CODE_QUICK_ANSWER_S = float(os.environ.get("CLAUDE_CODE_QUICK_ANSWER_S", "8"))
 +
 +CLAUDE_CODE_INSTRUCTIONS = """
 +
@@ -30,40 +38,46 @@ index 5d3659e..03c7e4a 100644
 +short code, read it to them, wait for their answer, and pass their exact words back as a new
 +claude_code task, for example "yes k q r t x". Never answer an approval yourself."""
 +
-+CLAUDE_CODE_VOICE_INSTRUCTIONS = """You are the voice of Claude Code, an AI coding agent running on the user's own
-+computer with their projects open. The user talks to you through Meta smart glasses or their
-+phone. The camera is off unless a request needs it.
++CLAUDE_CODE_VOICE_INSTRUCTIONS = """You are the voice of a personal assistant the user talks to through Meta smart glasses or
++their phone. Behind you is Claude Code, an AI agent running on the user's computer with their
++projects open. Together you are one assistant: you hold the conversation, Claude Code does the
++work.
 +
-+Claude Code is the one that knows things and does things; you are how the user hears it. For
-+anything that needs knowledge, reasoning or action, call claude_code: questions about their
-+code, files and projects, writing or changing code, running commands and tests, git,
-+explanations, advice, and general questions. Pass the request in the user's own words,
-+complete, together with anything from earlier in the call that it depends on. Do not answer
-+those yourself and never guess: Claude Code knows the user's projects and you do not.
++Talk like a sharp, friendly colleague on a call: natural, warm and brief. Vary your wording,
++react to what the user says, use what they told you earlier in the call, and ask a short
++follow-up question when it helps. This is speech, so no lists and no markdown.
 +
-+Answer on your own only for greetings and small talk, and for repeating or clarifying what
-+Claude Code just said. For current facts from the web (weather, news, scores, opening hours)
-+use quick_search: it answers in a couple of seconds.
++Handle these yourself, right away:
++- conversation, greetings, small talk, and follow-ups about what was just said
++- general knowledge you are sure of: explaining a concept, a definition, a quick opinion
++- current facts from the web (weather, news, scores, opening hours), with quick_search
 +
-+When the user asks you to look at something, or a request is about something in front of them
-+(a screen, an error message, code, a whiteboard, a document, an object), call claude_code with
-+attach_view=true. That turns the camera on just long enough to take a picture for Claude Code.
-+Do not describe the scene yourself.
++Send these to claude_code:
++- anything about the user's code, files, projects, computer or accounts
++- writing or changing code, running commands, tests or builds, git
++- anything you are not sure of. Never guess, and never make up details about their projects.
++Pass the request in the user's own words, complete, with any earlier context it needs. Before
++calling it, acknowledge in a few natural words ("Let me check", "On it", "One sec") and vary them.
 +
-+Before calling claude_code, say two or three words such as "Asking Claude" so the user knows
-+you heard them. Its answer can take ten seconds or more and may arrive as a follow-up. Relay it
-+briefly and faithfully, in your own words, without adding anything of your own.
++Claude Code can work on several things at once. While it is busy with something long, keep
++talking with the user and take new requests, sending each one to claude_code as its own call.
++Claude Code's answers and follow-ups come back to you as messages. When one arrives, work it into
++the conversation: say what it is about, give the result in your own words and accurately, and
++offer the obvious next step if there is one.
++
++The camera is off unless a request needs it. When the user asks you to look at something, or a
++request is about something in front of them (a screen, an error message, code, a whiteboard, a
++document, an object), call claude_code with attach_view=true. That turns the camera on just long
++enough to take a picture for Claude Code. Do not describe the scene yourself.
 +
 +If a claude_code result asks the user to approve something by saying yes or no followed by a
 +short code, read it to them, wait for their answer, and pass their exact words back as a new
-+claude_code task, for example "yes k q r t x". Never answer an approval yourself.
-+
-+This is a voice conversation: keep everything you say short."""
++claude_code task, for example "yes k q r t x". Never answer an approval yourself."""
 +
  _relay_tasks: set[asyncio.Task] = set()
  
  
-@@ -456,6 +510,47 @@ async def _drain_pending(user_id: str) -> list[str]:
+@@ -456,6 +524,77 @@ async def _drain_pending(user_id: str) -> list[str]:
          return []
  
  
@@ -90,8 +104,9 @@ index 5d3659e..03c7e4a 100644
 +        return "The Claude Code bridge returned an unexpected response."
 +
 +
-+async def _drain_claude_code_pending() -> list[str]:
-+    """Claude Code answers that landed after the call stopped waiting for them."""
++async def _fetch_claude_code_pending() -> list[str]:
++    """Claude Code messages nobody was waiting for: follow-ups to long jobs, and
++    answers that landed after their call stopped waiting. Reading clears them."""
 +    if not CLAUDE_CODE_URL:
 +        return []
 +    try:
@@ -102,16 +117,62 @@ index 5d3659e..03c7e4a 100644
 +                timeout=aiohttp.ClientTimeout(total=10),
 +            ) as resp:
 +                body = await resp.json()
-+        return [f"A Claude Code task from earlier finished. Result: {n}" for n in body.get("notifications") or []]
++        return [str(n) for n in body.get("notifications") or []]
 +    except Exception:
 +        logger.exception("claude code pending drain failed")
 +        return []
 +
 +
++async def _drain_claude_code_pending() -> list[str]:
++    """Claude Code answers from before this call, for the call-start relay."""
++    return [f"A Claude Code task from earlier finished. Result: {n}" for n in await _fetch_claude_code_pending()]
++
++
++CLAUDE_CODE_POLL_S = 3
++
++
++async def _relay_claude_code_followups(session: AgentSession, user_id: str) -> None:
++    """Claude Code answers a long job in two steps: a quick note that it has
++    started, then a follow-up when the work is done. Follow-ups wait in the
++    bridge's queue; speak them during the call instead of at the next one."""
++    while True:
++        await asyncio.sleep(CLAUDE_CODE_POLL_S)
++        for note in await _fetch_claude_code_pending():
++            await _await_session_free(session, DELIVER_WAIT_S)
++            try:
++                session.generate_reply(instructions=(
++                    "Claude Code just sent this about something the user asked earlier. It is NOT "
++                    "something the user said.\n\n"
++                    f"<<<CLAUDE\n{note}\nCLAUDE>>>\n\n"
++                    "Work it into the conversation now: say briefly what it is about and give the result "
++                    "in your own words, accurately. If it asks the user a question, ask it."))
++            except Exception:
++                logger.warning("call ended before a Claude Code follow-up was spoken; parking it: user=%s", user_id)
++                await _park_text(user_id, f"Claude Code sent this while you were away: {note}")
++                return
++
++
  def _card_text(raw: str, limit: int) -> str:
      """Markdown-ish search prose -> plain card text."""
      text = re.sub(r"[*_`#]+", "", raw)
-@@ -845,6 +940,66 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
+@@ -684,6 +823,7 @@ async def _run_delegated(
+     tool: str,
+     job: "asyncio.Future[str]",
+     on_deliver: Callable[[str | None], Awaitable[None]] | None = None,
++    quick_answer_s: float = QUICK_ANSWER_S,
+ ) -> str:
+     """Shared delegation loop for slow tools (execute, browse): hold the turn a
+     few seconds; if the result is not back, free the model, heartbeat, then relay
+@@ -695,7 +835,7 @@ async def _run_delegated(
+     tracer = ctx.userdata.tracer
+     user_id = ctx.userdata.user_id
+     task_start = time.monotonic()
+-    done, _ = await asyncio.wait({job}, timeout=QUICK_ANSWER_S)
++    done, _ = await asyncio.wait({job}, timeout=quick_answer_s)
+     if done:
+         result = await job
+         logger.info("%s quick result: user=%s len=%d t=%.1f", tool, user_id, len(result), time.monotonic() - task_start)
+@@ -845,6 +985,66 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
      return await _run_delegated(ctx, task, "execute", job)
  
  
@@ -172,13 +233,13 @@ index 5d3659e..03c7e4a 100644
 +    )
 +    ctx.userdata.tracer.emit("agent_action", tool="claude_code", task=task, attached_view=bool(image_b64))
 +    job = asyncio.ensure_future(_claude_code_execute(task, image_b64))
-+    return await _run_delegated(ctx, task, "claude_code", job)
++    return await _run_delegated(ctx, task, "claude_code", job, quick_answer_s=CLAUDE_CODE_QUICK_ANSWER_S)
 +
 +
  @function_tool
  async def browse(ctx: RunContext[Userdata], task: str) -> str:
      """The computer-use / shopping / browser agent: drives a real web browser on a live
-@@ -1245,8 +1400,13 @@ async def entrypoint(ctx: JobContext):
+@@ -1245,8 +1445,13 @@ async def entrypoint(ctx: JobContext):
  
      await session.start(
          agent=Agent(
@@ -194,7 +255,7 @@ index 5d3659e..03c7e4a 100644
          ),
          room=ctx.room,
          # Video is opt-in (RoomInputOptions.video_enabled defaults to False);
-@@ -1259,7 +1419,10 @@ async def entrypoint(ctx: JobContext):
+@@ -1259,7 +1464,17 @@ async def entrypoint(ctx: JobContext):
      # gateway; deliver them up front so a hangup never discards an answer.
      # Dead app connections ride the same opening beat: one brief mention,
      # then silence -- the fix lives in Settings -> Connected Apps.
@@ -203,6 +264,13 @@ index 5d3659e..03c7e4a 100644
 +        _drain_pending(user_id), _apps_needing_reconnect(user_id), _drain_claude_code_pending()
 +    )
 +    pending += claude_code_pending
++    if CLAUDE_CODE_URL:
++        followups = asyncio.create_task(_relay_claude_code_followups(session, user_id))
++
++        async def _stop_followups() -> None:
++            followups.cancel()
++
++        ctx.add_shutdown_callback(_stop_followups)
      reconnect_note = ""
      if stale_apps:
          logger.info("apps need reconnect: user=%s apps=%s", user_id, stale_apps)

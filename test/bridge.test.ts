@@ -244,6 +244,17 @@ describe('bridge with permission relay', () => {
     await cc.next()
   })
 
+  test('a long job answers at once, then follows up under the same chat_id', async () => {
+    const response = cc.post('/v1/chat/completions', { messages: [{ role: 'user', content: 'run the tests' }] })
+    const note = await cc.next()
+    const ack = await cc.reply(note.params!.meta.chat_id, 'Starting the test suite now.')
+    expect((ack.content as any)[0].text).toBe('sent')
+    expect(((await (await response).json()) as any).choices[0].message.content).toBe('Starting the test suite now.')
+    const followUp = await cc.reply(note.params!.meta.chat_id, 'All 212 tests passed.')
+    expect((followUp.content as any)[0].text).toStartWith('queued')
+    expect(await (await cc.get('/pending-notifications')).json()).toEqual({ notifications: ['All 212 tests passed.'] })
+  })
+
   test('permission prompt is spoken back and a spoken verdict answers it', async () => {
     const stream = await openEvents(cc.base)
     const response = cc.post('/message', { text: 'delete the build folder' })

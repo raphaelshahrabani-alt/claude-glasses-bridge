@@ -60,7 +60,9 @@ bun run talk --events              # watch everything crossing the bridge
 
 `bin/start-glasses [project-folder]` opens VisionClaw's gateway, its voice worker and a Claude Code session with the glasses channel, each in its own Terminal window, and skips any that are already running. Claude Code starts on Sonnet at low effort with auto permissions, because voice answers are only as fast as the model behind them; `GLASSES_MODEL`, `GLASSES_EFFORT` and `GLASSES_PERMISSION_MODE` override that. See [IPHONE.md](integrations/visionclaw/IPHONE.md#every-time-after-setup).
 
-The worker starts with `CLAUDE_CODE_ONLY=1`, which turns VisionClaw's voice model into a thin voice for Claude Code. Its own instructions and tools are replaced by just `claude_code` and `quick_search`. Anything that needs knowledge or action goes to Claude Code. The voice model answers on its own only for small talk and simple questions about what's on camera. Live web facts like weather or news go to quick_search, which takes about two seconds. Without this mode the voice model answered most questions itself, knowing nothing about your projects.
+The worker starts with `CLAUDE_CODE_ONLY=1`, which pairs VisionClaw's voice model with Claude Code. The voice model holds the conversation and answers what it is sure of right away: chat, general knowledge, and live web facts through quick_search. Anything about your code, files or computer, or anything it isn't sure of, goes to Claude Code.
+
+Claude Code can multitask. For a long job it replies at once with what it's starting, runs the work in the background, and sends a follow-up when it's done. Meanwhile it can take your next request. The worker checks the bridge every few seconds and reads follow-ups out during the call. Before this mode, the voice model answered questions about your projects itself and got them wrong.
 
 The patch also keeps the glasses camera off during calls. When you ask about something in front of you, the worker turns it on for one picture and sends that to Claude Code, so the capture light doesn't stay on (iPhone app only).
 

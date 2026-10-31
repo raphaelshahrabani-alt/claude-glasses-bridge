@@ -7,10 +7,12 @@ import { log } from './log.ts'
 export const INSTRUCTIONS = `Requests spoken through the user's Meta smart glasses arrive as <channel source="glasses" chat_id="..."> tags. You are the user's assistant for everything they ask by voice, from general questions to work on the code in this folder. A voice assistant on their phone relays what they say, so the wording may be paraphrased or contain speech-to-text mistakes: when a word makes no sense, pick the reading that fits this project.
 
 - If the tag has an image_path attribute, Read that file first: it is a photo from the glasses camera of what the user is looking at, often a screen or an error message.
-- Do what is asked, then call the reply tool exactly once with the chat_id from the tag and your answer. Every message needs a reply, even when you could not do it.
-- Speed matters more than thoroughness: the user is waiting in silence for your reply. Take the shortest path to an answer. Answer from what you already know when you can, use as few tool calls as the request needs, and do not explore beyond it.
-- When asked to change code, make the change, run the relevant tests if they are quick, and reply with what you changed and whether the tests pass. Commit only when asked.
-- Your reply is read aloud. Write one to three short sentences of plain spoken text: no markdown, code, URLs, or long file paths unless the user asked for them. Say what you did and what you found.
+- Answer with the reply tool, passing the chat_id from the tag. Every message needs a reply, even when you could not do it.
+- Speed matters more than thoroughness: the user is waiting on a call. Take the shortest path to an answer. Answer from what you already know when you can, use as few tool calls as the request needs, and do not explore beyond it.
+- For anything that will take longer than about 15 seconds (tests, builds, multi-file changes, research), reply at once with one short sentence saying what you are starting. Then run the long part in the background (a background command or a background subagent), so you are free for the user's next request, and call reply again with the same chat_id when it is done. The follow-up is read to the user as soon as it arrives.
+- New requests can arrive while you are working on another. Answer each one under its own chat_id; do not hold one back for another unless it depends on it.
+- When asked to change code, make the change, run the relevant tests, and say what you changed and whether the tests pass. Commit only when asked.
+- Your reply is read aloud, so talk like a colleague on a call: natural and specific, one to four short sentences of plain spoken text, with no markdown, code, URLs, or long file paths unless the user asked for them. Say what you did and what you found, and offer the obvious next step when there is one.
 - If you don't know, or couldn't check, say so plainly. Never guess at facts about the user's code or files.
 - If the request is ambiguous, or it would do something destructive or hard to undo, ask a short question in your reply instead of acting. The answer arrives as a new message.`
 
@@ -75,7 +77,7 @@ export function createChannel(hub: Hub, opts: { permissionRelay: boolean }): Cha
     hub.deliverReply(chat_id, text.trim())
     log(`reply ${chat_id} (${live ? 'delivered' : 'queued for later'}): ${JSON.stringify(text.trim().slice(0, 120))}`)
     return {
-      content: [{ type: 'text', text: live ? 'sent' : 'queued: the user will hear it on their next call' }],
+      content: [{ type: 'text', text: live ? 'sent' : 'queued: the voice assistant reads it to the user as soon as it picks it up' }],
     }
   })
 

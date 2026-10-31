@@ -219,7 +219,7 @@ start-glasses ~/path/to/your-project
 
 In the Claude Code window, choose "I am using this for local development". Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
 
-`start-glasses` runs Claude Code on Sonnet at low effort with auto permissions, so answers come back quickly. Set `GLASSES_MODEL=opus`, `GLASSES_EFFORT=high` or `GLASSES_PERMISSION_MODE=manual` to change that. It also starts the worker with `CLAUDE_CODE_ONLY=1`. That makes the voice model a thin voice for Claude Code: anything that needs knowledge or action goes to Claude Code, which knows your projects. Live web facts go to Gemini's two-second quick_search. VisionClaw's `execute` and `browse` tools, which need keys this setup doesn't have, are left out.
+`start-glasses` runs Claude Code on Sonnet at low effort with auto permissions, so answers come back quickly. Set `GLASSES_MODEL=opus`, `GLASSES_EFFORT=high` or `GLASSES_PERMISSION_MODE=manual` to change that. It also starts the worker with `CLAUDE_CODE_ONLY=1`. The voice model then holds the conversation and answers chat, general knowledge and web facts itself, and sends anything about your code or computer to Claude Code. Long jobs get a quick "starting that now" and a follow-up when they're done, read out during the call, so you can keep talking in the meantime. VisionClaw's `execute` and `browse` tools, which need keys this setup doesn't have, are left out.
 
 To check everything, run `~/claude-glasses-bridge/bin/glasses-doctor`. It marks each piece ✓ or ✗ with the fix, and times two live questions to Claude Code.
 
@@ -228,5 +228,5 @@ To check everything, run `~/claude-glasses-bridge/bin/glasses-doctor`. It marks 
 **Updating from an earlier version of the patch:** reset the files it changes, apply the new patch, restart the worker, and rebuild the iPhone app in Xcode (Product → Run):
 
 ```bash
-cd ~/VisionClaw && git checkout agent/main.py samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch
+cd ~/VisionClaw && git checkout agent/main.py samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift samples/CameraAccess/CameraAccess/Views/StreamSessionView.swift samples/CameraAccess/CameraAccess/Settings/SettingsManager.swift && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch
 ```
