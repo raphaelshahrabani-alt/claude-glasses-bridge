@@ -88,6 +88,26 @@ class VoiceCheckTest(unittest.TestCase):
         result = voicecheck.check("k", opener=opener_raising(urllib.error.URLError("offline")))
         self.assertEqual(result["status"], "network")
 
+    def test_deepgram_keys(self):
+        self.assertEqual(voicecheck.check_deepgram("good", opener=lambda r, timeout=0: Response()), {"ok": True})
+        seen = {}
+
+        def opener(request, timeout=0):
+            seen["auth"] = request.get_header("Authorization")
+            return Response()
+
+        voicecheck.check_deepgram("dg_key", opener=opener)
+        self.assertEqual(seen["auth"], "Token dg_key")
+        for code in (401, 403):
+            result = voicecheck.check_deepgram("bad", opener=opener_raising(http_error(code, {})))
+            self.assertEqual(result["status"], "invalid_api_key")
+            self.assertIn("glasses-key DEEPGRAM_API_KEY", result["fix"])
+        self.assertEqual(voicecheck.check_deepgram("k", opener=opener_raising(http_error(402, {})))["status"], "payment_required")
+        # a page that moved says nothing about the key: never call the key invalid because of it
+        self.assertEqual(voicecheck.check_deepgram("k", opener=opener_raising(http_error(404, {})))["status"], "unchecked")
+        self.assertEqual(
+            voicecheck.check_deepgram("k", opener=opener_raising(urllib.error.URLError("offline")))["status"], "network")
+
     def test_key_is_read_from_voice_env(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "voice.env").write_text("GLASSES_MODEL=x\nexport ELEVEN_API_KEY='sk_abc1234'\n")
@@ -155,6 +175,37 @@ class BackupVoiceTest(unittest.IsolatedAsyncioTestCase):
         adapter = lk_tts.FallbackAdapter([primary, backup], max_retry_per_tts=0)
         self.assertGreater(await self.speak(adapter), 0)
         self.assertEqual((primary.calls, backup.calls), (1, 0))
+
+    def test_a_deepgram_key_changes_what_hears_and_the_backup_voice(self):
+        saved = {k: os.environ.get(k) for k in ("DEEPGRAM_API_KEY", "ELEVEN_API_KEY", "ELEVENLABS_API_KEY")}
+        try:
+            os.environ.pop("ELEVEN_API_KEY", None)
+            os.environ.pop("ELEVENLABS_API_KEY", None)
+            os.environ.pop("DEEPGRAM_API_KEY", None)
+            self.assertIsInstance(worker.make_stt(["Harbor"]), str)  # LiveKit Inference, by name
+            os.environ["DEEPGRAM_API_KEY"] = "dg_test"
+            stt = worker.make_stt(["Harbor"])
+            self.assertEqual(type(stt).__module__, "livekit.plugins.deepgram.stt")
+            self.assertEqual(type(worker.make_tts()).__module__, "livekit.plugins.deepgram.tts")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_the_voice_says_when_it_cannot_hear(self):
+        class Event:
+            def __init__(self, type, error):
+                self.type, self.error = type, error
+
+        out_of_credits = worker.hearing_notice(Event("stt_error", "APIStatusError('Invalid response status (429 Too Many Requests)')"))
+        self.assertIn("out of free credits", out_of_credits)
+        self.assertIn("glasses key", out_of_credits)
+        self.assertIn("trouble hearing", worker.hearing_notice(Event("stt_error", "connection reset")))
+        # problems with speaking or with Claude are not "can't hear"
+        self.assertIsNone(worker.hearing_notice(Event("tts_error", "429")))
+        self.assertIsNone(worker.hearing_notice(Event("llm_error", "429")))
 
     def test_make_tts_wires_a_backup_behind_elevenlabs(self):
         keys = ["ELEVEN_API_KEY", "ELEVENLABS_API_KEY", "DEEPGRAM_API_KEY", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LIVEKIT_URL"]

@@ -307,6 +307,17 @@ class Camera:
             await self._command(False)
 
 
+def hearing_notice(event) -> str | None:
+    """What to say out loud when the speech-to-text can't hear the user (otherwise they hear silence)."""
+    if getattr(event, "type", "") != "stt_error":
+        return None
+    error = str(getattr(event, "error", event))
+    if "429" in error or "quota" in error.lower() or "credit" in error.lower():
+        return ("I can't hear you: the speech service is out of free credits. "
+                "On your Mac, add a Deepgram key with glasses key, then restart me.")
+    return "I'm having trouble hearing you. Check the Mac, in the voice window."
+
+
 def last_user_text(chat_ctx: llm.ChatContext) -> str:
     for item in reversed(chat_ctx.items):
         if getattr(item, "type", None) == "message" and getattr(item, "role", None) == "user":
@@ -393,8 +404,11 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     brain.speak = lambda text: session.say(text)
 
+    told_deaf = False
+
     @session.on("error")
     def _on_error(event) -> None:
+        nonlocal told_deaf
         error = getattr(event, "error", event)
         log.error("voice error (%s): %s", getattr(event, "source", "?"), error)
         if "elevenlabs" in str(error).lower():
@@ -402,9 +416,17 @@ async def entrypoint(ctx: JobContext) -> None:
                       "~/claude-glasses-bridge/bin/glasses-doctor")
         elif "429" in str(error) or "quota" in str(error).lower() or "credit" in str(error).lower():
             log.error(
-                "LiveKit Inference may be out of free credits. Put a Deepgram key in "
-                "~/.claude-glasses-bridge/voice.env (see the README, 'Direct voice')."
+                "LiveKit Inference may be out of free credits. Add a Deepgram key: "
+                "~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY"
             )
+        notice = hearing_notice(event)
+        if notice and not told_deaf:
+            # Without this the user just hears silence and has no idea why.
+            told_deaf = True
+            try:
+                session.say(notice)
+            except Exception:
+                log.exception("could not say that I can't hear")
 
     @session.on("close")
     def _on_close(event) -> None:

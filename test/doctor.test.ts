@@ -350,6 +350,45 @@ esac
     expect((await doctor([], { GLASSES_VOICE_PYTHON: working })).out).toContain('✓ the voice is ElevenLabs, and its key (ending alue) works')
   })
 
+  test('says it cannot hear you when LiveKit credits ran out, until a Deepgram key is added', async () => {
+    writeFileSync(join(dataDir, 'voice.env'), 'GLASSES_WORK_EFFORT=high\n')
+    writeFileSync(join(dataDir, 'voice.log'), [
+      '2026-10-31 14:00:01,000 [10] call started in room room-1',
+      "2026-10-31 14:00:02,000 [10] voice error (stt): APIStatusError('Invalid response status (429 Too Many Requests)')",
+      '2026-10-31 14:00:02,001 [10] LiveKit Inference may be out of free credits. Add a Deepgram key: ...',
+    ].join('\n'))
+    const before = (await doctor(['--quick'])).out
+    expect(before).toContain("✗ LiveKit's free speech credits ran out, so it can't hear you")
+    expect(before).toContain('glasses-key DEEPGRAM_API_KEY')
+    expect(before).toContain('(speech-to-text is LiveKit Inference')
+    // with a key added the old log lines are history
+    writeFileSync(join(dataDir, 'voice.env'), 'DEEPGRAM_API_KEY=dg_secret_value\n')
+    const after = (await doctor(['--quick'])).out
+    expect(after).not.toContain("can't hear you")
+    expect(after).toContain('✓ speech-to-text is Deepgram (run glasses-doctor without --quick to test the key)')
+    expect(after).not.toContain('dg_secret_value')
+  })
+
+  test('tests the Deepgram key and says if it is refused', async () => {
+    writeFileSync(join(dataDir, 'voice.env'), 'DEEPGRAM_API_KEY=dg_secret_value\n')
+    const python3 = (reply: string) => {
+      const path = join(dataDir, `fake-python-deepgram-${reply.length}`)
+      writeFileSync(path, `#!/bin/bash
+case "$*" in
+  *voicecheck.py*--deepgram*) echo '${reply}' ;;
+  *) exec ${python} "$@" ;;
+esac
+`)
+      chmodSync(path, 0o755)
+      return path
+    }
+    const refused = (await doctor([], { GLASSES_VOICE_PYTHON: python3('{"ok": false, "status": "invalid_api_key", "problem": "Deepgram says the key is not valid", "fix": "make a new key"}') })).out
+    expect(refused).toContain('✗ Deepgram, which hears you, has a problem: Deepgram says the key is not valid')
+    expect(refused).toContain('→ make a new key')
+    const fine = (await doctor([], { GLASSES_VOICE_PYTHON: python3('{"ok": true, "key_ends": "alue"}') })).out
+    expect(fine).toContain('✓ speech-to-text is Deepgram, and its key (ending alue) works')
+  })
+
   test('--quick skips the live test', async () => {
     const { out } = await doctor(['--quick'])
     expect(out).not.toContain('Live test')

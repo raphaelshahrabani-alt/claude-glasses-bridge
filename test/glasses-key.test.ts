@@ -68,7 +68,7 @@ describe('glasses-key', () => {
       const dir = fresh()
       const { code, out } = run(dir, ['ELEVEN_API_KEY'], 'sk_new_5678\n', checker(dir, '{"ok": false, "status": "network", "problem": "could not reach ElevenLabs"}'))
       expect(code).toBe(0)
-      expect(out).toContain("Couldn't reach ElevenLabs to check it")
+      expect(out).toContain("Couldn't check it with ElevenLabs")
       expect(out).not.toContain('key itself is fine')
       expect(readFileSync(join(dir, 'voice.env'), 'utf8')).toContain('ELEVEN_API_KEY=sk_new_5678')
     })
@@ -81,11 +81,32 @@ describe('glasses-key', () => {
       expect(readFileSync(join(dir, 'voice.env'), 'utf8')).toContain('ELEVEN_API_KEY=sk_new_5678')
     })
 
-    test('other keys are not sent to ElevenLabs', () => {
+    test('a Deepgram key is checked with Deepgram, and a bad one is not kept', () => {
       const dir = fresh()
-      const { out } = run(dir, ['DEEPGRAM_API_KEY'], 'dg_key\n', checker(dir, '{"ok": false, "status": "invalid_api_key"}'))
-      expect(out).not.toContain('ElevenLabs')
+      const good = run(dir, ['DEEPGRAM_API_KEY'], 'dg_good\n', checker(dir, '{"ok": true}'))
+      expect(good.out).toContain('✓ Deepgram accepts this key')
+      expect(readFileSync(join(dir, 'voice.env'), 'utf8')).toContain('DEEPGRAM_API_KEY=dg_good')
+      const bad = run(dir, ['DEEPGRAM_API_KEY'], 'dg_bad\n', checker(dir, '{"ok": false, "status": "invalid_api_key"}'))
+      expect(bad.code).toBe(1)
+      expect(bad.out).toContain("Deepgram says this key isn't valid")
+      expect(bad.out).toContain('console.deepgram.com')
+      expect(readFileSync(join(dir, 'voice.env'), 'utf8')).toContain('DEEPGRAM_API_KEY=dg_good')
+      expect(readFileSync(join(dir, 'voice.env'), 'utf8')).not.toContain('dg_bad')
+    })
+
+    test('a Deepgram page that moved is not taken for a bad key', () => {
+      const dir = fresh()
+      const { code, out } = run(dir, ['DEEPGRAM_API_KEY'], 'dg_key\n', checker(dir, '{"ok": false, "status": "unchecked", "problem": "Deepgram answered 404"}'))
+      expect(code).toBe(0)
+      expect(out).toContain("Couldn't check it with Deepgram")
       expect(readFileSync(join(dir, 'voice.env'), 'utf8')).toContain('DEEPGRAM_API_KEY=dg_key')
+    })
+
+    test('other keys are not sent anywhere', () => {
+      const dir = fresh()
+      const { out } = run(dir, ['GLASSES_SOMETHING_KEY'], 'abc\n', checker(dir, '{"ok": false, "status": "invalid_api_key"}'))
+      expect(out).not.toContain('Checking')
+      expect(readFileSync(join(dir, 'voice.env'), 'utf8')).toContain('GLASSES_SOMETHING_KEY=abc')
     })
   })
 

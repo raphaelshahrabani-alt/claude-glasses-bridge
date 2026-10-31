@@ -4,8 +4,9 @@ unexpectedly (1008)"; the regular API says why.
 
     voicecheck.py           a sentence for people
     voicecheck.py --json    {"ok": ..., "problem": ..., "fix": ...} for glasses-doctor
+    voicecheck.py --deepgram  the same for the Deepgram key, which hears you
 
-The key comes from ELEVEN_API_KEY, or from ~/.claude-glasses-bridge/voice.env.
+The key comes from ELEVEN_API_KEY (or DEEPGRAM_API_KEY), or from ~/.claude-glasses-bridge/voice.env.
 """
 from __future__ import annotations
 
@@ -45,7 +46,7 @@ FIXES = {
 }
 
 
-def key_from_env_file() -> str | None:
+def key_from_env_file(names: tuple[str, ...] = ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY")) -> str | None:
     try:
         text = (DATA_DIR / "voice.env").read_text(encoding="utf-8")
     except OSError:
@@ -55,10 +56,35 @@ def key_from_env_file() -> str | None:
         line = line.strip()
         if line.startswith("export "):
             line = line[7:].strip()
-        for name in ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"):
+        for name in names:
             if line.startswith(name + "="):
                 value = line.split("=", 1)[1].strip().strip("'\"") or value
     return value
+
+
+def check_deepgram(key: str, opener: Callable[..., Any] = urllib.request.urlopen) -> dict[str, Any]:
+    """Asks Deepgram (which hears you on a call) whether it accepts the key."""
+    request = urllib.request.Request(
+        "https://api.deepgram.com/v1/projects", headers={"Authorization": f"Token {key}"}, method="GET"
+    )
+    try:
+        with opener(request, timeout=20) as response:
+            response.read(64)
+        return {"ok": True}
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return {"ok": False, "status": "invalid_api_key", "problem": "Deepgram says the key isn't valid",
+                    "fix": "create a new key on console.deepgram.com (API Keys) and run: "
+                           "~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY"}
+        if e.code == 402:
+            return {"ok": False, "status": "payment_required", "problem": "the Deepgram account is out of credit",
+                    "fix": "add credit on console.deepgram.com"}
+        # anything else (such as the page moving) says nothing about the key
+        return {"ok": False, "status": "unchecked", "problem": f"Deepgram answered {e.code}",
+                "fix": "glasses-doctor tests it again later"}
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return {"ok": False, "status": "network", "problem": f"couldn't reach Deepgram: {e}",
+                "fix": "check the Mac's internet connection"}
 
 
 def check(key: str, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL,
@@ -92,10 +118,16 @@ def check(key: str, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL,
 
 
 def main(argv: list[str]) -> int:
-    key = os.environ.get("ELEVEN_API_KEY") or os.environ.get("ELEVENLABS_API_KEY") or key_from_env_file()
+    deepgram = "--deepgram" in argv
+    names = ("DEEPGRAM_API_KEY",) if deepgram else ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY")
+    label = "Deepgram" if deepgram else "ElevenLabs"
+    key = next((os.environ[n] for n in names if os.environ.get(n)), None) or key_from_env_file(names)
     if not key:
-        result: dict[str, Any] = {"ok": False, "status": "no_key", "problem": "no ElevenLabs key is saved",
-                                  "fix": "run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY"}
+        result: dict[str, Any] = {"ok": False, "status": "no_key", "problem": f"no {label} key is saved",
+                                  "fix": f"run: ~/claude-glasses-bridge/bin/glasses-key {names[0]}"}
+    elif deepgram:
+        result = check_deepgram(key)
+        result["key_ends"] = key[-4:]
     else:
         result = check(key, os.environ.get("GLASSES_ELEVENLABS_VOICE", DEFAULT_VOICE),
                        os.environ.get("GLASSES_ELEVENLABS_MODEL", DEFAULT_MODEL))
@@ -103,9 +135,9 @@ def main(argv: list[str]) -> int:
     if "--json" in argv:
         print(json.dumps(result))
     elif result["ok"]:
-        print(f"✓ ElevenLabs works with the key ending in {result['key_ends']}.")
+        print(f"✓ {label} works with the key ending in {result['key_ends']}.")
     else:
-        print(f"✗ The ElevenLabs voice can't speak: {result['problem']}.")
+        print(f"✗ {label} has a problem: {result['problem']}.")
         print(f"  → {result['fix']}")
     return 0 if result["ok"] else 1
 

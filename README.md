@@ -104,7 +104,13 @@ If ElevenLabs refuses a request (a wrong key, no credits left), the voice falls 
 
 The default voice is Eric ("smooth, trustworthy", made for assistants). Others that suit a call: Chris `iP95p4xoKVk53GoZ742B` (down to earth), Will `bIHbv24MWmeRgasZH58o` (relaxed), Roger `CwhRBWXzGAHq8TQ4Fs17` (laid back), Jessica `cgSgspJ2msm6clMCkdW9` (warm, female) and River `SAz9YHcvj6GT2YYXdXww` (calm, neutral). Set one with `GLASSES_ELEVENLABS_VOICE=<id>` in `voice.env`. ElevenLabs bills by characters spoken; the free plan covers about 10 minutes a month.
 
-**Speech-to-text and, without ElevenLabs, the voice** use [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3 and a Cartesia voice), billed to your LiveKit Cloud project. No other account is needed, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls, and then speech stops working (`glasses-doctor` says so). For more, either upgrade the LiveKit plan, or create a [Deepgram](https://deepgram.com) account (it starts with free credit) and save its key with `~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY`. Speech-to-text (and the voice, without ElevenLabs) then come from Deepgram directly.
+**What hears you: a Deepgram key.** Speech-to-text uses [LiveKit Inference](https://docs.livekit.io/agents/models/) by default (Deepgram Nova-3, billed to your LiveKit Cloud project). That needs no other account, but the free Build plan includes only $2.50 of credits a month, about 50 minutes of calls. When they run out it can't hear you at all: the log fills with `stt_error ... 429 Too Many Requests`, and the voice says "I can't hear you: the speech service is out of free credits." Create a free [Deepgram](https://deepgram.com) account (it starts with free credit; console.deepgram.com → API Keys → Create a New API Key) and save the key:
+
+```
+~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY
+```
+
+Speech-to-text then comes from Deepgram directly, and so does the backup voice (when ElevenLabs refuses), so LiveKit's credits stop mattering. Like the ElevenLabs key, it is checked with Deepgram as you save it, and a key Deepgram says is invalid isn't kept.
 
 Other settings that can go in `voice.env` (restart the voice window after changing it):
 
@@ -113,6 +119,7 @@ Other settings that can go in `voice.env` (restart the voice window after changi
 | `GLASSES_WORK_MODEL` | `opus` | The model for real work. `sonnet` is faster and uses less of your plan. |
 | `GLASSES_WORK_EFFORT` | `high` | `medium` answers sooner; `xhigh` and `max` think even longer before each step. |
 | `ELEVEN_API_KEY` | none | Speaks with ElevenLabs. |
+| `DEEPGRAM_API_KEY` | none | Hears you (speech-to-text) and is the backup voice, instead of LiveKit's free credits. |
 | `GLASSES_ELEVENLABS_VOICE` | Eric | An ElevenLabs voice id. |
 | `GLASSES_ELEVENLABS_MODEL` | the plugin's default | Such as `eleven_flash_v2_5` (fastest). |
 | `GLASSES_CHROME` | on | `0` runs the work model without Claude in Chrome. |
@@ -223,6 +230,7 @@ The bridge listens on `127.0.0.1` by default, so only processes on the same comp
 ## Troubleshooting
 
 - **It says "credit balance is too low":** Claude Code was paying with an Anthropic API key instead of your Claude subscription. The voice worker now leaves `ANTHROPIC_API_KEY` out; update and restart start-glasses. If it still happens, `glasses-doctor`'s live test says which account Claude Code uses (an Anthropic Console login also bills prepaid credit: `/logout`, then `/login` with your Claude account).
+- **You hear the greeting, then nothing, and `voice.log` says `stt_error ... 429 Too Many Requests`:** the speech-to-text can't hear you because LiveKit's free credits ran out. The voice also says so out loud. Add a Deepgram key with `~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY` (see [Direct voice](#direct-voice)), then restart. Nothing you say appears under `~/.claude-glasses-bridge/calls/` while this is happening, which is a quick way to tell it apart from other problems.
 - **You hear nothing, and `voice.log` says "ElevenLabs websocket connection closed unexpectedly" (status 1008):** ElevenLabs is refusing the request. The voice then falls back to the LiveKit voice, so you still hear answers. Run `glasses-doctor`: it asks ElevenLabs directly and says why. The usual reasons are a key that isn't valid, a key without Text to Speech access (edit it on elevenlabs.io → API Keys), no credits left, or ElevenLabs blocking its free plan for "unusual activity". That last one only a paid plan lifts. Save a new key with `~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY`: it checks the key with ElevenLabs as it saves, and doesn't keep one ElevenLabs says is invalid.
 - **"Agent left the call" or no answer with the direct voice:** look at the "glasses: voice" window and `~/.claude-glasses-bridge/voice.log`, then run `glasses-doctor`. If LiveKit Inference ran out of credits, add a Deepgram key (see [Direct voice](#direct-voice)).
 - **Run `bun run talk` in a plain terminal, never in Claude Code's prompt.** If Claude runs it, Claude is stuck waiting on a command that is waiting for Claude.

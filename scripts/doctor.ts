@@ -140,6 +140,23 @@ async function checkDirect() {
     info('(the voice is LiveKit Inference; for ElevenLabs run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY)')
   }
 
+  if (has('DEEPGRAM_API_KEY')) {
+    const python = process.env.GLASSES_VOICE_PYTHON ?? join(config.dataDir, 'voice-venv', 'bin', 'python')
+    if (quick || !existsSync(python)) {
+      ok('speech-to-text is Deepgram (run glasses-doctor without --quick to test the key)')
+    } else {
+      const out = Bun.spawnSync([python, join(root, 'voice', 'voicecheck.py'), '--json', '--deepgram'], { env: process.env }).stdout.toString()
+      let result: { ok?: boolean; problem?: string; fix?: string; key_ends?: string } = {}
+      try {
+        result = JSON.parse(out.trim().split('\n').pop() ?? '{}')
+      } catch {}
+      if (result.ok) ok(`speech-to-text is Deepgram, and its key (ending ${result.key_ends}) works`)
+      else bad(`Deepgram, which hears you, has a problem: ${result.problem ?? 'the check failed'}`, result.fix ?? `read ${join(config.dataDir, 'voice.log')}`)
+    }
+  } else {
+    info('(speech-to-text is LiveKit Inference, whose free credits run out; for more: ~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY)')
+  }
+
   const emailFile = join(config.dataDir, 'email-accounts.json')
   let emailAccounts: string[] = []
   try {
@@ -180,8 +197,11 @@ async function checkDirect() {
       info(`work requests were done after ${doneMid.toFixed(1)}s on median; ${done.filter(d => d.tools).length} of ${done.length} used tools`)
     }
   }
-  if (stats.creditsOut) {
-    bad('LiveKit Inference ran out of free credits, so speech-to-text or the voice stopped', 'add a Deepgram key: see "Direct voice" in the README')
+  if (stats.creditsOut && !has('DEEPGRAM_API_KEY')) {
+    bad(
+      "LiveKit's free speech credits ran out, so it can't hear you (the log says 429 Too Many Requests)",
+      'create a free account on deepgram.com, then run: ~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY',
+    )
   }
   if (stats.crashes) {
     bad(`Claude Code quit unexpectedly ${stats.crashes} time${stats.crashes === 1 ? '' : 's'}`, `read the "glasses: voice" window or ${logFile}`)
