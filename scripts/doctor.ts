@@ -18,6 +18,7 @@ import {
   patchState,
   seconds,
   verdict,
+  workVerdict,
 } from '../src/doctor.ts'
 import type { AskResult } from '../src/http.ts'
 
@@ -122,19 +123,25 @@ async function checkDirect() {
   const logFile = join(config.dataDir, 'voice.log')
   const stats = parseVoiceLog(existsSync(logFile) ? readFileSync(logFile, 'utf8') : '')
   if (stats.calls) info(`${stats.calls} call${stats.calls === 1 ? '' : 's'} in the log, the last at ${stats.lastCall}`)
-  const first = stats.firstWords.slice(-10)
-  const mid = median(first)
-  if (mid === undefined) {
-    info('no answers yet')
-  } else {
-    const v = firstWordsVerdict(mid)
-    const line = `first words after ${mid.toFixed(1)}s (median of the last ${first.length} answer${first.length === 1 ? '' : 's'})`
+  const timing = (label: string, values: number[], judge: (s: number) => string) => {
+    const recent = values.slice(-10)
+    const mid = median(recent)
+    if (mid === undefined) return false
+    const line = `${label} after ${mid.toFixed(1)}s (median of the last ${recent.length})`
+    const v = judge(mid)
     if (v === 'good') ok(line)
     else bad(`${line}: ${v}`, 'see "Faster answers" in the README')
+    return true
+  }
+  const anyQuick = timing('the quick voice answered', stats.quick, firstWordsVerdict)
+  const anyWork = timing(anyQuick ? 'the work model started talking' : 'first words', stats.firstWords, anyQuick ? workVerdict : firstWordsVerdict)
+  if (!anyQuick && !anyWork) {
+    info('no answers yet')
+  } else {
     const done = stats.done.slice(-10)
     const doneMid = median(done.map(d => d.s))
     if (doneMid !== undefined) {
-      info(`requests were done after ${doneMid.toFixed(1)}s on median; ${done.filter(d => d.tools).length} of ${done.length} used tools`)
+      info(`work requests were done after ${doneMid.toFixed(1)}s on median; ${done.filter(d => d.tools).length} of ${done.length} used tools`)
     }
   }
   if (stats.creditsOut) {
@@ -177,20 +184,26 @@ async function checkDirect() {
   })
   if (rows.length === 0) bad('Claude Code did not start', 'run claude in Terminal and check that you are logged in')
   for (const row of rows) {
-    if (row.test === 'startup') {
-      if (row.ok) ok(`Claude Code started in ${row.total_s}s (${row.model}, effort ${row.effort}, in ${row.cwd})`)
-      else bad('Claude Code quit right after starting', 'run claude in Terminal and check that you are logged in')
+    if (String(row.test).endsWith('startup')) {
+      const who = String(row.test).replace(/ startup$/, '')
+      if (row.ok) ok(`${who}: Claude Code started in ${row.total_s}s (${row.model}, effort ${row.effort}, in ${row.cwd})`)
+      else bad(`${who}: Claude Code quit right after starting`, 'run claude in Terminal and check that you are logged in')
       continue
     }
-    if (row.ok && row.first_s != null) {
-      const v = firstWordsVerdict(row.first_s)
+    const work = row.test === 'simple question' || row.test === 'email check'
+    const reply = String(row.reply ?? '').replace(/^\s*\[work\]\s*/i, '')
+    if (row.test === 'hand-off') {
+      if (row.handed_off) ok(`hand-off: the quick voice passed an email question to the work model, saying "${reply}" after ${row.first_s}s`)
+      else bad('hand-off: the quick voice answered an email question itself instead of passing it on', `read ${logFile}`)
+    } else if (row.ok && row.first_s != null) {
+      const v = (work ? workVerdict : firstWordsVerdict)(row.first_s)
       const line = `${row.test}: first words after ${row.first_s}s, done in ${row.total_s}s`
       if (v === 'good') ok(line)
       else bad(`${line} (${v})`, 'see "Faster answers" in the README')
+      if (reply && !row.api_error) info(`Claude said: ${JSON.stringify(reply)}`)
     } else {
       bad(`${row.test}: ${row.error ?? 'failed'}`, `read ${logFile}`)
     }
-    if (row.reply && !row.api_error) info(`Claude said: ${JSON.stringify(row.reply)}`)
     if (row.credentials) {
       const c = credentials(row.credentials)
       if (c.ok) ok(c.say)

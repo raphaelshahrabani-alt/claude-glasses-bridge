@@ -6,6 +6,7 @@ Anything that would need a yes is turned down, so the tests change nothing.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 import time
@@ -16,7 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claude_lane import ApiError, Done, Lane, Permission, Text, ToolStart  # noqa: E402
 from worker import brain_config, read_persona  # noqa: E402
 
-TESTS = [
+TALK_TESTS = [
+    ("quick answer", "Health check from glasses-doctor: just say OK."),
+    ("hand-off", "Check my email for me."),
+]
+WORK_TESTS = [
     ("simple question", "Health check from glasses-doctor: reply with just the word OK."),
     (
         "email check",
@@ -70,26 +75,35 @@ async def timed(lane: Lane, text: str, limit: float) -> dict:
     }
 
 
-async def main() -> None:
-    config = brain_config(read_persona()).lane
-    lane = Lane(config, "doctor")
+async def run(config, name: str, tests: list[tuple[str, str]], extra: dict) -> None:
+    lane = Lane(config, name)
     await lane.start()
     try:
-        with __import__("contextlib").suppress(asyncio.TimeoutError):
+        with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(lane.ready.wait(), 60)
-        print(json.dumps({"test": "startup", "ok": lane.alive, "total_s": round(lane.ready_after or 0, 1),
-                          "model": config.model, "effort": config.effort, "cwd": config.cwd}), flush=True)
-        for name, text in TESTS:
+        print(json.dumps({"test": f"{name} startup", "ok": lane.alive, "total_s": round(lane.ready_after or 0, 1),
+                          "model": config.model, "effort": config.effort, "cwd": config.cwd, **extra}), flush=True)
+        for i, (test, text) in enumerate(tests):
             if not lane.alive:
                 break
             result = await timed(lane, text, 120)
-            result["test"] = name
-            if name == "simple question":
-                result["connectors"] = lane.mcp_status
+            result["test"] = test
+            if test == "hand-off":
+                result["handed_off"] = result["reply"].lstrip().lower().startswith("[work]")
+            if i == 0:
                 result["credentials"] = lane.api_key_source
+                if not config.talk_only:
+                    result["connectors"] = lane.mcp_status
             print(json.dumps(result), flush=True)
     finally:
         await lane.close()
+
+
+async def main() -> None:
+    config = brain_config(read_persona())
+    if config.talk is not None:
+        await run(config.talk, "quick voice", TALK_TESTS, {})
+    await run(config.lane, "work model", WORK_TESTS, {})
 
 
 if __name__ == "__main__":

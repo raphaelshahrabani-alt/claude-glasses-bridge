@@ -99,7 +99,9 @@ export function claudeLaunch(command: string): ClaudeLaunch {
 }
 
 export interface VoiceStats {
-  /** Seconds from the user finishing a sentence to Claude's first words, oldest first. */
+  /** Seconds from the user finishing a sentence to the quick voice's first words, oldest first. */
+  quick: number[]
+  /** Seconds to the work model's first words, oldest first. */
   firstWords: number[]
   /** Seconds until each request was done, and how many tool calls it took. */
   done: { s: number; tools: number }[]
@@ -119,13 +121,13 @@ const VOICE_LINE_RE = /^(\S+ \S+) \[\d+\] (.*)$/
 
 /** Reads ~/.claude-glasses-bridge/voice.log, written by voice/worker.py. */
 export function parseVoiceLog(text: string): VoiceStats {
-  const stats: VoiceStats = { firstWords: [], done: [], calls: 0, errors: [], creditsOut: false, crashes: 0, notConnected: [] }
+  const stats: VoiceStats = { quick: [], firstWords: [], done: [], calls: 0, errors: [], creditsOut: false, crashes: 0, notConnected: [] }
   for (const line of text.split('\n')) {
     const parsed = VOICE_LINE_RE.exec(line)
     if (!parsed) continue
     const [, at, msg] = parsed
     let m: RegExpExecArray | null
-    if ((m = /: first words after ([\d.]+)s$/.exec(msg))) stats.firstWords.push(Number(m[1]))
+    if ((m = /^(.+?): first words after ([\d.]+)s$/.exec(msg))) (m[1] === 'quick voice' ? stats.quick : stats.firstWords).push(Number(m[2]))
     else if ((m = /: done after ([\d.]+)s, (\d+) tool call/.exec(msg))) {
       stats.done.push({ s: Number(m[1]), tools: Number(m[2]) })
       if (!msg.includes(', failed:')) stats.apiError = undefined
@@ -145,6 +147,13 @@ export function parseVoiceLog(text: string): VoiceStats {
 export function firstWordsVerdict(s: number): string {
   if (s < 3.5) return 'good'
   if (s < 6) return 'slow'
+  return 'very slow'
+}
+
+/** The same for the work model, which speaks after the quick voice has already said "on it". */
+export function workVerdict(s: number): string {
+  if (s < 8) return 'good'
+  if (s < 15) return 'slow'
   return 'very slow'
 }
 

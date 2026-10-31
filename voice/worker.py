@@ -109,37 +109,63 @@ def keyterms(persona: str) -> list[str]:
     return [t for t in terms if not (t.lower() in seen or seen.add(t.lower()))][:50]
 
 
-def system_prompt_file(persona: str) -> str:
-    """Voice rules plus the user's profile, in one file for --append-system-prompt-file."""
-    text = (HERE / "prompt.md").read_text(encoding="utf-8")
+def system_prompt_file(persona: str, rules: str = "prompt.md", name: str = "voice-prompt.md") -> str:
+    """Voice rules plus the user's profile, in one file Claude Code reads at start."""
+    text = (HERE / rules).read_text(encoding="utf-8")
     if persona.strip():
         text += "\n\n" + persona
-    path = DATA_DIR / "voice-prompt.md"
+    path = DATA_DIR / name
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return str(path)
+
+
+def setting(*names: str, default: str) -> str | None:
+    """The first of these environment variables that is set; empty means Claude Code's default."""
+    for name in names:
+        if name in os.environ:
+            return os.environ[name] or None
+    return default
 
 
 def brain_config(persona: str) -> BrainConfig:
     home = Path.home()
     default_project = home / "Desktop" if (home / "Desktop").is_dir() else home
     project = str(Path(os.environ.get("GLASSES_PROJECT", default_project)).expanduser())
-    lane = LaneConfig(
+    claude = os.environ.get("CLAUDE_BIN", "claude")
+    use_api_key = os.environ.get("GLASSES_USE_API_KEY") == "1"
+    # Real work (code, email, calendar, business) runs on the best model.
+    work = LaneConfig(
         cwd=project,
-        claude=os.environ.get("CLAUDE_BIN", "claude"),
-        model=os.environ.get("GLASSES_MODEL", "sonnet") or None,
-        effort=os.environ.get("GLASSES_EFFORT", "low") or None,
-        permission_mode=os.environ.get("GLASSES_PERMISSION_MODE", "auto") or None,
+        claude=claude,
+        model=setting("GLASSES_WORK_MODEL", "GLASSES_MODEL", default="opus"),
+        effort=setting("GLASSES_WORK_EFFORT", "GLASSES_EFFORT", default="medium"),
+        permission_mode=setting("GLASSES_PERMISSION_MODE", default="auto"),
         add_dirs=env_dirs("GLASSES_ADD_DIRS"),
         system_prompt_file=system_prompt_file(persona),
-        use_api_key=os.environ.get("GLASSES_USE_API_KEY") == "1",
+        use_api_key=use_api_key,
     )
+    # A fast model with no tools answers first: small talk and quick facts
+    # itself, and "on it" for everything else while the work model starts.
+    talk = None
+    if os.environ.get("GLASSES_TALK", "1") != "0":
+        talk = LaneConfig(
+            cwd=project,
+            claude=claude,
+            model=setting("GLASSES_TALK_MODEL", default="haiku"),
+            effort=setting("GLASSES_TALK_EFFORT", default="low"),
+            talk_only=True,
+            system_prompt_file=system_prompt_file(persona, "talk.md", "talk-prompt.md"),
+            use_api_key=use_api_key,
+        )
     return BrainConfig(
-        lane=lane,
+        lane=work,
+        talk=talk,
         data_dir=DATA_DIR,
         max_lanes=int(os.environ.get("GLASSES_LINES", "3")),
         finish_after_hangup_s=FINISH_AFTER_HANGUP_S,
         resume_minutes=float(os.environ.get("GLASSES_RESUME_MINUTES", "30")),
+        warm_up=os.environ.get("GLASSES_WARM_UP", "1") != "0",
     )
 
 

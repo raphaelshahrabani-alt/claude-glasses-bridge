@@ -63,6 +63,51 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
         self.assertEqual(self.spoken, ["Your inbox: two emails need you."])
 
+    async def test_quick_voice_hands_over_through_livekit(self):
+        await self.session.aclose()
+        self.brain.config.finish_after_hangup_s = 0.1
+        await self.brain.close()
+        lane = LaneConfig(cwd=str(self.dir), claude=str(HERE / "fake_claude.py"))
+        talk = LaneConfig(cwd=str(self.dir), claude=str(HERE / "fake_claude.py"), talk_only=True)
+        self.brain = Brain(BrainConfig(lane=lane, talk=talk, data_dir=self.dir / "data2"))
+        await self.brain.start()
+        self.spoken = []
+        self.brain.speak = self.spoken.append
+        self.session = AgentSession(
+            llm=worker.ClaudeCodeLLM(self.brain),
+            turn_handling={"preemptive_generation": {"enabled": False}},
+        )
+        await self.session.start(Agent(instructions="unused"))
+        result = await self.session.run(user_input="hello")
+        self.assertEqual([r.strip() for r in self.replies(result)], ["Hi there, quick answer."])
+        result = await self.session.run(user_input="check my email")
+        self.assertEqual([r.strip() for r in self.replies(result)], ["On it. Checking your inbox."])
+        end = time.monotonic() + 5
+        while not self.spoken and time.monotonic() < end:
+            await asyncio.sleep(0.05)
+        self.assertEqual(self.spoken, ["Your inbox: two emails need you."])
+
+    def test_models(self):
+        keys = ["GLASSES_MODEL", "GLASSES_WORK_MODEL", "GLASSES_TALK", "GLASSES_TALK_MODEL", "GLASSES_WORK_EFFORT"]
+        saved = {k: os.environ.pop(k, None) for k in keys}
+        try:
+            config = worker.brain_config("")
+            self.assertEqual((config.lane.model, config.lane.effort), ("opus", "medium"))
+            self.assertEqual((config.talk.model, config.talk.effort, config.talk.talk_only), ("haiku", "low", True))
+            self.assertTrue(config.warm_up)
+            os.environ["GLASSES_MODEL"] = "sonnet"
+            self.assertEqual(worker.brain_config("").lane.model, "sonnet")
+            os.environ["GLASSES_WORK_MODEL"] = "opus"
+            self.assertEqual(worker.brain_config("").lane.model, "opus")
+            os.environ["GLASSES_TALK"] = "0"
+            self.assertIsNone(worker.brain_config("").talk)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
     def test_profile_bits(self):
         persona = (
             "## About me\n\n- Name: Alexandra Martin (Alex)\n\n## My projects\n\n"

@@ -68,9 +68,9 @@ bun run talk --events              # watch everything crossing the bridge
 
 ## Starting everything (VisionClaw)
 
-`bin/start-glasses [project-folder] [more-folders...]` opens each piece in its own Terminal window and skips any that are already running. Claude Code works in the first folder and can also read and change the others. By default that is VisionClaw's gateway (the phone logs in through it) and the direct voice worker, `bin/glasses-voice`. Claude Code runs on Sonnet at low effort with auto permissions; `GLASSES_MODEL`, `GLASSES_EFFORT` and `GLASSES_PERMISSION_MODE` override that. See [IPHONE.md](integrations/visionclaw/IPHONE.md#every-time-after-setup).
+`bin/start-glasses [project-folder] [more-folders...]` opens each piece in its own Terminal window and skips any that are already running. Claude Code works in the first folder and can also read and change the others. By default that is VisionClaw's gateway (the phone logs in through it) and the direct voice worker, `bin/glasses-voice`. A quick model answers first and hands real work to Opus (see [Direct voice](#direct-voice)). See [IPHONE.md](integrations/visionclaw/IPHONE.md#every-time-after-setup).
 
-`GLASSES_VOICE=gemini start-glasses ...` starts the older setup instead: the gateway, VisionClaw's Gemini worker with `CLAUDE_CODE_ONLY=1`, and a Claude Code session with the glasses channel. There, the voice model answers chat and general knowledge itself and sends anything about your code, files or computer to Claude Code. Long jobs reply at once and send a follow-up when done. Folders are passed with `--add-dir`, and permission prompts are read out on the glasses (`GLASSES_PERMISSION_RELAY=0` turns that off).
+`GLASSES_VOICE=gemini start-glasses ...` starts the older setup instead: the gateway, VisionClaw's Gemini worker with `CLAUDE_CODE_ONLY=1`, and a Claude Code session with the glasses channel, on Sonnet at low effort (`GLASSES_MODEL`, `GLASSES_EFFORT`). There, the voice model answers chat and general knowledge itself and sends anything about your code, files or computer to Claude Code. Long jobs reply at once and send a follow-up when done. Folders are passed with `--add-dir`, and permission prompts are read out on the glasses (`GLASSES_PERMISSION_RELAY=0` turns that off).
 
 Either way the patched app keeps the glasses camera off during calls. When you ask about something in front of you, the worker turns it on for one picture, so the capture light doesn't stay on (iPhone app only).
 
@@ -78,7 +78,12 @@ Either way the patched app keeps the glasses camera off during calls. When you a
 
 `bin/glasses-voice` runs `voice/worker.py`, a LiveKit agent that joins your calls in place of VisionClaw's Gemini worker (it stops that one if it's running). The first run sets up its own Python environment in `~/.claude-glasses-bridge/voice-venv`; it reads the LiveKit keys from `~/VisionClaw/gateway/.env`.
 
-- **Straight to Claude Code.** Each call starts Claude Code headless (`claude -p` with streaming input and output) in your project folder, with your profile and voice rules (`voice/prompt.md`) as extra instructions. Your words go in as you finish a sentence; Claude's first sentence is spoken while it is still writing the rest. In a test on Sonnet, a simple answer started after about 2.5 seconds and a Gmail check after 2.7.
+- **Straight to Claude Code, in two tiers.** Each call starts Claude Code headless (`claude -p` with streaming input and output), and Claude's first sentence is spoken while it is still writing the rest:
+  - **The quick voice** (Haiku, no tools, `voice/talk.md`) hears everything first. It answers small talk and quick facts itself. For anything else it says "on it" and hands over.
+  - **The work model** (Opus at medium effort, with your projects, email, calendar and every tool, `voice/prompt.md`) handles everything that matters: code, files, email, calendar, and advice, numbers or decisions about your business. Both get your profile.
+
+  In a test with the real Claude Code, after the call's warm-up, the quick voice answered small talk in 1.1 seconds. For a pricing question it said "Sure, one sec." after 1.4 seconds; Opus started its answer at 2.7 and finished at 3.9.
+- **Warm from the first question.** When a call starts, each Claude Code process gets a tiny first message, so your first real question doesn't wait for it to load (`GLASSES_WARM_UP=0` turns it off).
 - **Keeps talking while it works.** When Claude goes off to use tools, the call is free again. Ask something else and a second Claude Code process ("line") answers, told what the first one is doing; the first one's result is spoken when it's ready. If a line goes quiet for 25 seconds you hear "Still on it." Say "stop" or "never mind" to cancel the newest request.
 - **Approvals by voice.** When Claude Code needs permission, you hear "Quick check before I go on: ... Is that okay?" Say yes or no. Read-only Gmail, Calendar and Drive tools are pre-approved. With no answer in two minutes, the request is turned down.
 - **Remembers.** A call within 30 minutes of the last one continues the same Claude Code session (`GLASSES_RESUME_MINUTES`). Earlier, every new line is also told the end of today's and yesterday's calls.
@@ -96,8 +101,11 @@ Other settings that can go in `voice.env` (restart the voice window after changi
 
 | Variable | Default | |
 | - | - | - |
-| `GLASSES_MODEL` | `sonnet` | `haiku` answers about a second sooner; `opus` is slower but better at hard work. |
-| `GLASSES_EFFORT` | `low` | |
+| `GLASSES_WORK_MODEL` | `opus` | The model for real work. `sonnet` is faster and uses less of your plan. |
+| `GLASSES_WORK_EFFORT` | `medium` | `high` thinks longer before each step: better on hard problems, slower on a call. |
+| `GLASSES_TALK_MODEL` | `haiku` | The quick voice. |
+| `GLASSES_TALK` | on | `0` sends everything straight to the work model. |
+| `GLASSES_WARM_UP` | on | `0` skips the warm-up message when a call starts. |
 | `GLASSES_PERMISSION_MODE` | `auto` | |
 | `GLASSES_LANGUAGE` | `en` | Speech-to-text language, such as `fr`, or `multi` for several. |
 | `GLASSES_STT`, `GLASSES_TTS` | Deepgram Nova-3, Cartesia Sonic 3 | LiveKit Inference models, as `provider/model:language` and `provider/model:voice`. |
@@ -130,13 +138,13 @@ Whatever your profile says, Claude is told never to act in your name without a c
 - Speech errors and running out of LiveKit credits.
 - Connectors that weren't connected.
 
-It then starts Claude Code exactly as the voice worker does and times a plain question and a Gmail check, which also shows whether Gmail and Calendar are connected. With the Gemini voice it checks the bridge, the Claude Code session, the worker and the VisionClaw patch, and times two questions through the bridge. `--quick` skips the live tests.
+It then starts Claude Code exactly as the voice worker does and times the quick voice (a quick answer, and handing an email question over) and the work model (a plain question and a Gmail check, which also shows whether Gmail and Calendar are connected). With the Gemini voice it checks the bridge, the Claude Code session, the worker and the VisionClaw patch, and times two questions through the bridge. `--quick` skips the live tests.
 
 ## Faster answers
 
 With the direct voice, an answer starts when speech-to-text notices you stopped talking (about half a second) and Claude Code writes its first words; `glasses-doctor` shows both. What changes the Claude Code part:
 
-- **Model and effort:** Sonnet at low effort is the default. `GLASSES_MODEL=haiku` in `voice.env` starts about a second sooner. Opus is slower but better at hard coding work.
+- **Models:** the quick voice (Haiku) answers in about a second and says "on it" for real work. Opus then takes a few seconds more. That's the price of the best model; `GLASSES_WORK_MODEL=sonnet` in `voice.env` is quicker, and `GLASSES_WORK_EFFORT=high` is slower but more careful. Opus also uses up your plan's limits faster than Sonnet.
 - **First questions about a project:** Claude Code has to read around a project it doesn't know yet, which is slow. Run `/init` once in each project to give it a `CLAUDE.md` it reads up front.
 - **Long sessions:** a session that runs all day gets slower as its context grows. Calls more than 30 minutes apart start fresh; lower `GLASSES_RESUME_MINUTES` to start fresh more often.
 - **Hooks and plugins:** anything that runs on every prompt or tool call, such as a memory plugin, adds its time to every answer. If the doctor's times are high, try with them turned off in `/plugin`.

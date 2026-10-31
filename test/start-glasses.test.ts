@@ -51,9 +51,7 @@ describe('start-glasses (direct voice, the default)', () => {
     expect(windows.map(w => w[0])).toEqual(['glasses: gateway', 'glasses: voice'])
     expect(windows[0][1]).toBe(`cd ${env.visionclaw}/gateway && npm run dev`)
     // the space in the project path is escaped, not split
-    expect(windows[1][1]).toBe(
-      `GLASSES_PROJECT=${env.root}/my\\ project GLASSES_MODEL=sonnet GLASSES_EFFORT=low GLASSES_PERMISSION_MODE=auto caffeinate -dims ${voiceScript}`,
-    )
+    expect(windows[1][1]).toBe(`GLASSES_PROJECT=${env.root}/my\\ project caffeinate -dims ${voiceScript}`)
     expect(out).toContain('you talk straight to Claude Code')
     expect(out).toContain(`calls are written down in ${env.root}/.claude-glasses-bridge/calls/`)
   })
@@ -62,9 +60,10 @@ describe('start-glasses (direct voice, the default)', () => {
     const env = setup({ listening: [8788] })
     mkdirSync(join(env.root, 'poker-tracker'))
     mkdirSync(join(env.root, 'ugc automation'))
-    const { windows, out } = run(env, { GLASSES_MODEL: 'haiku' }, [join(env.root, 'poker-tracker'), join(env.root, 'ugc automation')])
+    const { windows, out } = run(env, { GLASSES_WORK_MODEL: 'sonnet', GLASSES_TALK_EFFORT: 'medium' }, [join(env.root, 'poker-tracker'), join(env.root, 'ugc automation')])
     expect(windows).toHaveLength(1)
-    expect(windows[0][1]).toContain('GLASSES_MODEL=haiku ')
+    expect(windows[0][1]).toContain(' GLASSES_TALK_EFFORT=medium GLASSES_WORK_MODEL=sonnet ')
+    expect(windows[0][1]).not.toContain('GLASSES_MODEL=')
     expect(windows[0][1]).toContain(`GLASSES_ADD_DIRS=${env.root}/poker-tracker:${env.root}/ugc\\ automation `)
     expect(out).toContain(`also has access to ${env.root}/ugc automation`)
   })

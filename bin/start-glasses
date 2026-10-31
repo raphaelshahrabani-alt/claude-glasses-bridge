@@ -13,8 +13,11 @@
 # the older setup instead: VisionClaw's Gemini worker, which hands requests to
 # a separate Claude Code session through the glasses channel.
 #
-# Claude Code starts on a quick model at low effort. Override with
-# GLASSES_MODEL, GLASSES_EFFORT and GLASSES_PERMISSION_MODE. If
+# With the direct voice, a quick model with no tools answers first (Haiku,
+# GLASSES_TALK_MODEL) and hands real work to the best one (Opus,
+# GLASSES_WORK_MODEL and GLASSES_WORK_EFFORT). The Gemini setup runs its Claude
+# Code session on Sonnet at low effort (GLASSES_MODEL, GLASSES_EFFORT). Both
+# take GLASSES_PERMISSION_MODE (default auto). If
 # ~/.claude-glasses-bridge/persona.md exists (start from
 # templates/business-partner.md), Claude Code loads it as extra instructions:
 # who you are, your projects, and what it must check with you first.
@@ -78,9 +81,13 @@ if [[ "$voice" == direct ]]; then
   if pgrep -f "voice/worker.py start" >/dev/null; then
     echo "voice:   already running"
   else
-    # Settings travel on the command line: the new window doesn't inherit this shell's environment.
-    voice_cmd="$(printf 'GLASSES_PROJECT=%q GLASSES_MODEL=%q GLASSES_EFFORT=%q GLASSES_PERMISSION_MODE=%q' \
-      "$project" "$model" "$effort" "$permission_mode")"
+    # Settings travel on the command line: the new window doesn't inherit this
+    # shell's environment. Only the ones you set: the worker has its own defaults.
+    voice_cmd="$(printf 'GLASSES_PROJECT=%q' "$project")"
+    for var in GLASSES_TALK_MODEL GLASSES_TALK_EFFORT GLASSES_WORK_MODEL GLASSES_WORK_EFFORT \
+      GLASSES_MODEL GLASSES_EFFORT GLASSES_PERMISSION_MODE; do
+      if [[ -n "${!var:-}" ]]; then voice_cmd+="$(printf ' %s=%q' "$var" "${!var}")"; fi
+    done
     if [[ -n "${extra_dirs[*]+set}" ]]; then
       joined="$(IFS=:; echo "${extra_dirs[*]}")"
       voice_cmd+="$(printf ' GLASSES_ADD_DIRS=%q' "$joined")"
@@ -90,7 +97,7 @@ if [[ "$voice" == direct ]]; then
     # caffeinate keeps the Mac awake while it runs.
     voice_cmd+="$(printf ' caffeinate -dims %q' "$root/bin/glasses-voice")"
     open_window "glasses: voice" "$voice_cmd"
-    echo "voice:   started: you talk straight to Claude Code in $project ($model, effort $effort)"
+    echo "voice:   started: you talk straight to Claude Code in $project"
     for dir in ${extra_dirs[@]+"${extra_dirs[@]}"}; do
       echo "         also has access to $dir"
     done

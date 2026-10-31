@@ -54,6 +54,9 @@ class LaneConfig:
     # With ANTHROPIC_API_KEY in the environment, `claude -p` always bills that
     # key instead of the user's Claude subscription, so it is left out unless asked for.
     use_api_key: bool = False
+    # The quick voice up front: no tools, no connectors, and its own short
+    # system prompt instead of Claude Code's, so it answers fast.
+    talk_only: bool = False
 
     def command(self) -> list[str]:
         cmd = [
@@ -71,6 +74,11 @@ class LaneConfig:
             cmd += ["--effort", self.effort]
         if self.permission_mode:
             cmd += ["--permission-mode", self.permission_mode]
+        if self.talk_only:
+            cmd += ["--tools", "", "--strict-mcp-config", "--setting-sources", ""]
+            if self.system_prompt_file:
+                cmd += ["--system-prompt-file", self.system_prompt_file]
+            return cmd + (["--resume", self.resume] if self.resume else [])
         for d in self.add_dirs:
             cmd += ["--add-dir", d]
         if self.system_prompt_file:

@@ -29,7 +29,7 @@ async def until(condition, timeout=5.0):
     return False
 
 
-class BrainTest(unittest.IsolatedAsyncioTestCase):
+class BrainBase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
@@ -67,6 +67,9 @@ class BrainTest(unittest.IsolatedAsyncioTestCase):
         rows = [json.loads(line) for line in self.log.read_text().splitlines()]
         return [r for r in rows if kind is None or r["kind"] == kind]
 
+
+
+class BrainTest(BrainBase):
     async def test_answer_is_spoken_as_it_streams(self):
         brain = await self.brain()
         self.assertEqual(await self.ask(brain, "hello"), "Hi there.")
@@ -250,6 +253,77 @@ class BrainTest(unittest.IsolatedAsyncioTestCase):
         again = await self.brain()
         self.assertEqual(again.parked(), ["Finished the long task."])
         self.assertEqual(again.parked(), [])
+
+
+class QuickVoiceTest(BrainBase):
+    """The quick voice up front, handing real work to the work lines."""
+
+    def config(self, **overrides):
+        config = super().config(**overrides)
+        if "talk" not in overrides:
+            config.talk = LaneConfig(cwd=str(self.dir), claude=FAKE, model="haiku", talk_only=True)
+        return config
+
+    def by_lane(self):
+        """User messages, split into the quick voice's and the work lines'."""
+        talk_pids = {r["pid"] for r in self.fake_log("argv") if "--strict-mcp-config" in r["value"]}
+        users = self.fake_log("user")
+        return [u for u in users if u["pid"] in talk_pids], [u for u in users if u["pid"] not in talk_pids]
+
+    async def test_quick_answer_comes_from_the_quick_voice(self):
+        brain = await self.brain()
+        self.assertEqual(await self.ask(brain, "hello"), "Hi there, quick answer.")
+        talk, work = self.by_lane()
+        self.assertEqual(len(talk), 1)
+        self.assertEqual(work, [])
+
+    async def test_real_work_goes_to_the_work_model(self):
+        brain = await self.brain()
+        self.assertEqual(await self.ask(brain, "check my email"), "On it. Checking your inbox.")
+        self.assertTrue(await until(lambda: self.spoken))
+        self.assertEqual(self.spoken, ["Your inbox: two emails need you."])
+        talk, work = self.by_lane()
+        self.assertEqual(len(work), 1)
+        self.assertIn("already heard a quick", work[0]["value"])
+        # the user's words aren't repeated as background
+        self.assertNotIn("User: check my email", work[0]["value"])
+        argv = [r["value"] for r in self.fake_log("argv") if "--strict-mcp-config" not in r["value"]][0]
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+        # the quick voice hears what the work model said
+        await self.ask(brain, "thanks")
+        talk, _ = self.by_lane()
+        self.assertIn("Your inbox: two emails need you.", talk[-1]["value"])
+
+    async def test_advice_without_tools_streams_straight_through(self):
+        brain = await self.brain()
+        reply = await self.ask(brain, "a business question about my prices")
+        self.assertEqual(reply, "On it. Raise it to six dollars, your margins can take it.")
+        self.assertEqual(self.spoken, [])
+
+    async def test_a_stuck_quick_voice_hands_over(self):
+        os.environ["FAKE_STALL_S"] = "3"
+        brain = await self.brain(talk_decide_s=0.5)
+        started = time.monotonic()
+        reply = await self.ask(brain, "stall then answer")
+        self.assertLess(time.monotonic() - started, 2.5)
+        self.assertIn(reply.split(" ")[0], ["On", "Let", "One", "Okay,"])
+        _, work = self.by_lane()
+        self.assertEqual(len(work), 1)
+
+    async def test_works_without_the_quick_voice_when_it_cannot_start(self):
+        talk = LaneConfig(cwd=str(self.dir), claude=str(self.dir / "no-such-claude"), talk_only=True)
+        brain = await self.brain(talk=talk)
+        self.assertEqual(await self.ask(brain, "hello"), "Hi there.")
+
+    async def test_warm_up_before_the_first_question(self):
+        brain = await self.brain(warm_up=True)
+        self.assertTrue(await until(lambda: len(self.fake_log("user")) >= 2))
+        self.assertEqual(await self.ask(brain, "hello"), "Hi there, quick answer.")
+        talk, work = self.by_lane()
+        self.assertIn("warm-up", talk[0]["value"])
+        self.assertIn("warm-up", work[0]["value"])
+        # warm-ups aren't part of the conversation
+        self.assertNotIn("warm-up", brain.calls.path().read_text())
 
 
 class WordsTest(unittest.TestCase):

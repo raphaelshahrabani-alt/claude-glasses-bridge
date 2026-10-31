@@ -67,12 +67,43 @@ def result(text, ok=True):
          "result": text, "session_id": session, "duration_ms": 10})
 
 
+TALK = "--strict-mcp-config" in args
+
+
+def talk(words):
+    """The quick voice: hands anything that needs work over with [work]."""
+    if "warm-up" in words:
+        say("ok")
+        result("ok")
+    elif "stall" in words:
+        wait(float(os.environ.get("FAKE_STALL_S", "3")))
+        say("[work] Too late.")
+        result("[work] Too late.")
+    elif any(w in words for w in ("email", "long", "file", "slow", "broke", "crash", "business")):
+        event({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
+        for piece in ["[wo", "rk] ", "On ", "it."]:
+            event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": piece}})
+        event({"type": "content_block_stop", "index": 0})
+        result("[work] On it.")
+    else:
+        say("Hi there, quick answer.")
+        result("Hi there, quick answer.")
+
+
 def handle(content):
     interrupted.clear()
     text = content if isinstance(content, str) else " ".join(
         b.get("text", "[image]") if b.get("type") == "text" else "[image]" for b in content)
     words = text.split("[The user just said]")[-1].lower()
-    if "email" in words:
+    if TALK:
+        talk(words)
+    elif "warm-up" in words:
+        say("ok")
+        result("ok")
+    elif "business" in words:
+        say("Raise it to six dollars, your margins can take it.")
+        result("Raise it to six dollars, your margins can take it.")
+    elif "email" in words:
         say("Checking your inbox.")
         tool("mcp__plugin_small-business_gmail__search_threads", 1)
         wait(0.3)

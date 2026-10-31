@@ -75,6 +75,7 @@ describe('parseVoiceLog', () => {
   test('collects timings, errors and connector problems', () => {
     const log = [
       '2026-10-31 14:00:01,000 [10] call started in room room-1',
+      '2026-10-31 14:00:04,000 [10] quick voice: first words after 0.9s',
       '2026-10-31 14:00:05,100 [10] line 1: first words after 2.1s',
       '2026-10-31 14:00:05,300 [10] line 1: done after 2.4s, 0 tool call(s)',
       '2026-10-31 14:01:00,000 [10] line 1: connectors not connected: plugin:small-business:gmail, plugin:small-business:hubspot',
@@ -88,6 +89,7 @@ describe('parseVoiceLog', () => {
     ].join('\n')
     const stats = parseVoiceLog(log)
     expect(stats.firstWords).toEqual([2.1, 3.9])
+    expect(stats.quick).toEqual([0.9])
     expect(stats.done).toEqual([{ s: 2.4, tools: 0 }, { s: 11, tools: 3 }])
     expect(stats.calls).toBe(1)
     expect(stats.lastCall).toBe('2026-10-31 14:00:01,000')
@@ -237,14 +239,18 @@ describe('glasses-doctor with the direct voice worker', () => {
     writeFileSync(join(dataDir, 'calls', `${day}.md`), '\n## Call at 14:00\n\n14:00:02  You: check my email\n14:00:04  Claude: Checking your inbox.\n')
     writeFileSync(join(dataDir, 'voice.log'), [
       '2026-10-31 14:00:01,000 [10] call started in room room-1',
-      '2026-10-31 14:00:04,100 [10] line 1: first words after 2.2s',
+      '2026-10-31 14:00:03,000 [10] quick voice: first words after 1.0s',
+      '2026-10-31 14:00:04,100 [10] line 1: first words after 4.2s',
       '2026-10-31 14:00:09,300 [10] line 1: done after 7.4s, 2 tool call(s)',
     ].join('\n'))
     // stands in for the voice worker's Python running voice/selftest.py
     writeFileSync(python, `#!/bin/bash
-echo '{"test": "startup", "ok": true, "total_s": 0.8, "model": "sonnet", "effort": "low", "cwd": "/Users/me/Desktop"}'
-echo '{"test": "simple question", "ok": true, "first_s": 2.4, "total_s": 2.5, "reply": "OK", "tools": [], "credentials": "none", "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth", "plugin:small-business:hubspot": "failed"}}'
-echo '{"test": "email check", "ok": true, "first_s": 2.6, "total_s": 5.1, "reply": "Three.", "tools": ["mcp__gmail__search_threads"]}'
+echo '{"test": "quick voice startup", "ok": true, "total_s": 0.7, "model": "haiku", "effort": "low", "cwd": "/Users/me/Desktop"}'
+echo '{"test": "quick answer", "ok": true, "first_s": 1.1, "total_s": 1.2, "reply": "OK", "tools": [], "credentials": "none"}'
+echo '{"test": "hand-off", "ok": true, "first_s": 1.2, "total_s": 1.4, "reply": "[work] Sure, one sec.", "tools": [], "handed_off": true}'
+echo '{"test": "work model startup", "ok": true, "total_s": 0.8, "model": "opus", "effort": "medium", "cwd": "/Users/me/Desktop"}'
+echo '{"test": "simple question", "ok": true, "first_s": 4.4, "total_s": 4.5, "reply": "OK", "tools": [], "credentials": "none", "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth", "plugin:small-business:hubspot": "failed"}}'
+echo '{"test": "email check", "ok": true, "first_s": 3.6, "total_s": 7.1, "reply": "Three.", "tools": ["mcp__gmail__search_threads"]}'
 `)
     chmodSync(python, 0o755)
     gateway = Bun.serve({ port: 18795, hostname: '127.0.0.1', fetch: () => Response.json({ ok: true }) })
@@ -282,16 +288,20 @@ echo '{"test": "email check", "ok": true, "first_s": 2.6, "total_s": 5.1, "reply
     expect(out).toContain('✓ the voice worker is running the current code')
     expect(out).toContain("✓ the LiveKit keys are in VisionClaw's gateway/.env")
     expect(out).toContain('(no profile yet')
-    expect(out).toContain('✓ first words after 2.2s (median of the last 1 answer)')
-    expect(out).toContain('requests were done after 7.4s on median; 1 of 1 used tools')
+    expect(out).toContain('✓ the quick voice answered after 1.0s (median of the last 1)')
+    expect(out).toContain('✓ the work model started talking after 4.2s (median of the last 1)')
+    expect(out).toContain('work requests were done after 7.4s on median; 1 of 1 used tools')
     expect(out).toContain('14:00:04  Claude: Checking your inbox.')
-    expect(out).toContain('✓ Claude Code started in 0.8s (sonnet, effort low, in /Users/me/Desktop)')
-    expect(out).toContain('✓ simple question: first words after 2.4s, done in 2.5s')
+    expect(out).toContain('✓ quick voice: Claude Code started in 0.7s (haiku, effort low, in /Users/me/Desktop)')
+    expect(out).toContain('✓ quick answer: first words after 1.1s, done in 1.2s')
+    expect(out).toContain('✓ hand-off: the quick voice passed an email question to the work model, saying "Sure, one sec." after 1.2s')
+    expect(out).toContain('✓ work model: Claude Code started in 0.8s (opus, effort medium, in /Users/me/Desktop)')
+    expect(out).toContain('✓ simple question: first words after 4.4s, done in 4.5s')
     expect(out).toContain('✓ Claude Code uses your Claude subscription login')
     expect(out).toContain('✓ plugin:small-business:gmail is connected')
     expect(out).toContain('✗ plugin:small-business:google-calendar is needs-auth')
     expect(out).not.toContain('hubspot')
-    expect(out).toContain('✓ email check: first words after 2.6s, done in 5.1s')
+    expect(out).toContain('✓ email check: first words after 3.6s, done in 7.1s')
     expect(out).toContain('Claude said: "Three."')
     expect(out).toContain('1 problem found.')
     expect(code).toBe(1)

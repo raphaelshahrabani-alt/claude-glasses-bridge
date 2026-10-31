@@ -80,6 +80,13 @@ if pgrep -f "main.py start" >/dev/null 2>&1; then
   pkill -f "main.py start" || true
 fi
 
-echo "glasses-voice: Claude Code works in ${GLASSES_PROJECT:-$HOME/Desktop} (${GLASSES_MODEL:-sonnet}, effort ${GLASSES_EFFORT:-low})"
+work_model="${GLASSES_WORK_MODEL:-${GLASSES_MODEL:-opus}}"
+work_effort="${GLASSES_WORK_EFFORT:-${GLASSES_EFFORT:-medium}}"
+echo "glasses-voice: Claude Code works in ${GLASSES_PROJECT:-$HOME/Desktop}"
+if [[ "${GLASSES_TALK:-1}" == 0 ]]; then
+  echo "glasses-voice: everything on $work_model (effort $work_effort)"
+else
+  echo "glasses-voice: quick answers on ${GLASSES_TALK_MODEL:-haiku}, real work on $work_model (effort $work_effort)"
+fi
 echo "glasses-voice: calls are written to $data_dir/calls/"
 exec "$venv/bin/python" "$root/voice/worker.py" start
