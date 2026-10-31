@@ -68,3 +68,32 @@ export function verdict(ms: number): string {
   if (ms < 20_000) return 'slow'
   return 'very slow'
 }
+
+/** Seconds from `ps -o etime=` ("[[dd-]hh:]mm:ss"), or null. */
+export function elapsedSeconds(etime: string): number | null {
+  const match = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(etime)
+  if (!match) return null
+  const [, days, hours, minutes, secs] = match
+  return Number(days ?? 0) * 86400 + Number(hours ?? 0) * 3600 + Number(minutes) * 60 + Number(secs)
+}
+
+export interface ClaudeLaunch {
+  model?: string
+  effort?: string
+  permissionMode?: string
+  persona?: string
+  addDirs: string[]
+}
+
+/** The start-glasses flags a running `claude` command line carries. */
+export function claudeLaunch(command: string): ClaudeLaunch {
+  const value = (flag: string) => new RegExp(`${flag} (\\S+)`).exec(command)?.[1]
+  const addDirs = [...command.matchAll(/--add-dir (\S+)/g)].map(m => m[1])
+  return {
+    model: value('--model'),
+    effort: value('--effort'),
+    permissionMode: value('--permission-mode'),
+    persona: value('--append-system-prompt-file'),
+    addDirs,
+  }
+}

@@ -3,11 +3,11 @@
 // project. Run it while start-glasses is running:
 //   bin/glasses-doctor            (or: bun run doctor)
 //   bin/glasses-doctor --quick    connection checks only; nothing is sent to Claude
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig } from '../src/config.ts'
-import { median, parseBridgeLog, patchState, seconds, verdict } from '../src/doctor.ts'
+import { claudeLaunch, elapsedSeconds, median, parseBridgeLog, patchState, seconds, verdict } from '../src/doctor.ts'
 import type { AskResult } from '../src/http.ts'
 
 const config = loadConfig()
@@ -42,6 +42,14 @@ function sh(cmd: string[]): string {
   }
 }
 
+/** When a process started, in ms since the epoch, or null. */
+function startedAt(pid: string): number | null {
+  const secs = elapsedSeconds(sh(['ps', '-o', 'etime=', '-p', pid]))
+  return secs === null ? null : Date.now() - secs * 1000
+}
+
+const restart = 'quit Terminal (⌘Q, then Terminate) and run start-glasses again'
+
 console.log('Connections')
 
 const health = await getJson(`${base}/health`)
@@ -57,6 +65,31 @@ if (health === null) {
   ok(`Claude Code is connected to the bridge at ${base}`)
   if (health.permission_relay) ok('permission prompts are read out on the glasses, to approve by voice')
   else info('(voice approvals are off: a permission prompt waits on the Mac until someone answers it there)')
+  checkClaudeSession()
+}
+
+/** The Claude Code session that started this bridge: is it on the current code, and how was it launched? */
+function checkClaudeSession() {
+  const root = join(import.meta.dir, '..')
+  for (const pid of sh(['pgrep', '-f', join(root, 'src', 'server.ts')]).split('\n').filter(Boolean)) {
+    const parent = sh(['ps', '-o', 'ppid=', '-p', pid])
+    const command = parent ? sh(['ps', '-ww', '-o', 'command=', '-p', parent]) : ''
+    if (!/--(dangerously-load-development-)?channels\b/.test(command)) continue
+    const started = startedAt(pid)
+    const src = join(root, 'src')
+    const changed = Math.max(...readdirSync(src).map(f => statSync(join(src, f)).mtimeMs))
+    if (started !== null && started < changed - 1000) {
+      bad('Claude Code was started before the bridge was updated, so it still has the old instructions', restart)
+    }
+    const launch = claudeLaunch(command)
+    if (launch.model) ok(`Claude Code runs on ${launch.model}, effort ${launch.effort ?? 'default'}, ${launch.permissionMode ?? 'default'} permissions`)
+    else info('(Claude Code was not started by start-glasses: default model and effort)')
+    const persona = join(config.dataDir, 'persona.md')
+    if (launch.persona) ok(`your profile is loaded (${launch.persona})`)
+    else if (existsSync(persona)) bad('your profile (persona.md) exists but this session did not load it', restart)
+    if (launch.addDirs.length) info(`(also has access to ${launch.addDirs.join(', ')})`)
+    return
+  }
 }
 
 if ((await getJson(`${gatewayUrl}/health`)) === null) {
@@ -87,6 +120,14 @@ if (!workerPid) {
 }
 
 const mainPy = join(visionclaw, 'agent', 'main.py')
+if (workerPid && existsSync(mainPy)) {
+  const started = startedAt(workerPid)
+  if (started !== null && started < statSync(mainPy).mtimeMs - 1000) {
+    bad("the voice worker is still running code from before your last update", restart)
+  } else if (started !== null) {
+    ok('the voice worker is running the current code')
+  }
+}
 const patch = patchState(existsSync(mainPy) ? readFileSync(mainPy, 'utf8') : null)
 const applyPatch = `cd ${visionclaw} && git checkout agent/main.py samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift samples/CameraAccess/CameraAccess/Views/StreamSessionView.swift samples/CameraAccess/CameraAccess/Settings/SettingsManager.swift && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch, then restart the worker (rebuild the iPhone app too if the patch's Swift files changed)`
 if (patch === 'current') ok('VisionClaw has the current Claude Code patch')

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { median, parseBridgeLog, patchState, verdict } from '../src/doctor.ts'
+import { claudeLaunch, elapsedSeconds, median, parseBridgeLog, patchState, verdict } from '../src/doctor.ts'
 
 const root = join(import.meta.dir, '..')
 
@@ -40,6 +40,25 @@ describe('helpers', () => {
     expect(patchState('def _with_user_words(t, h): ...\nasync def claude_code(ctx')).toBe('old')
     expect(patchState('CLAUDE_CODE_PATCH_VERSION = 4\nasync def claude_code(ctx')).toBe('old')
     expect(patchState('CLAUDE_CODE_PATCH_VERSION = 5\nasync def claude_code(ctx')).toBe('current')
+  })
+
+  test('elapsedSeconds reads ps etime', () => {
+    expect(elapsedSeconds('  05:12')).toBe(312)
+    expect(elapsedSeconds('1:02:03')).toBe(3723)
+    expect(elapsedSeconds('2-01:02:03')).toBe(2 * 86400 + 3723)
+    expect(elapsedSeconds('')).toBeNull()
+  })
+
+  test('claudeLaunch reads the start-glasses flags', () => {
+    const cmd = 'claude --dangerously-load-development-channels server:glasses --model sonnet --effort low --permission-mode auto --add-dir /Users/r/Downloads --append-system-prompt-file /Users/r/.claude-glasses-bridge/persona.md'
+    expect(claudeLaunch(cmd)).toEqual({
+      model: 'sonnet',
+      effort: 'low',
+      permissionMode: 'auto',
+      persona: '/Users/r/.claude-glasses-bridge/persona.md',
+      addDirs: ['/Users/r/Downloads'],
+    })
+    expect(claudeLaunch('claude --dangerously-load-development-channels server:glasses')).toEqual({ addDirs: [] } as any)
   })
 
   test('median and verdict', () => {
@@ -114,6 +133,7 @@ describe('glasses-doctor end to end', () => {
     expect(out).toContain('✓ Claude Code is connected to the bridge at http://127.0.0.1:18796')
     expect(out).toContain("✓ VisionClaw's gateway is running")
     expect(out).toContain("✓ VisionClaw's voice worker is running")
+    expect(out).toContain('✓ the voice worker is running the current code')
     expect(out).toContain('✓ VisionClaw has the current Claude Code patch')
     expect(out).toMatch(/✓ simple question: \d+\.\ds/)
     expect(out).toContain('Claude said: "OK"')
@@ -128,6 +148,14 @@ describe('glasses-doctor end to end', () => {
     expect(out).toContain('Health check from glasses-doctor: reply with just the word OK.'.slice(0, 60))
     expect(out).toMatch(/median Claude Code time: \d+\.\ds/)
     expect(out).not.toContain('Live tests')
+  })
+
+  test('spots a worker that started before its code changed', async () => {
+    await Bun.sleep(2100)
+    writeFileSync(join(visionclaw, 'agent', 'main.py'), 'CLAUDE_CODE_PATCH_VERSION = 5\nasync def claude_code(ctx): ...\n')
+    const { out } = await doctor(['--quick'])
+    expect(out).toContain('✗ the voice worker is still running code from before your last update')
+    expect(out).toContain('run start-glasses again')
   })
 
   test('says what to run when nothing is up', async () => {
