@@ -46,9 +46,10 @@ FIXES = {
 }
 
 
-def key_from_env_file(names: tuple[str, ...] = ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY")) -> str | None:
+def key_from_env_file(names: tuple[str, ...] = ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"),
+                      directory: Path | None = None) -> str | None:
     try:
-        text = (DATA_DIR / "voice.env").read_text(encoding="utf-8")
+        text = ((directory or DATA_DIR) / "voice.env").read_text(encoding="utf-8")
     except OSError:
         return None
     value = None

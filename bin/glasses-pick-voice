@@ -1,0 +1,10 @@
+#!/bin/bash
+# Hear the ElevenLabs voices and pick the one you like.
+#   glasses-pick-voice            a list; type a number to hear it, y to keep it
+#   glasses-pick-voice VOICE_ID   hear one voice by its id
+# Restart the voice window afterwards.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${GLASSES_VOICE_VENV:-${GLASSES_DATA_DIR:-$HOME/.claude-glasses-bridge}/voice-venv}"
+"$root/bin/glasses-voice" --setup
+exec "$venv/bin/python" "$root/voice/pickvoice.py" "$@"
