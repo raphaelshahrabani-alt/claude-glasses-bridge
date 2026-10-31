@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from claude_lane import Done, Lane, Permission, Text, ToolStart  # noqa: E402
+from claude_lane import ApiError, Done, Lane, Permission, Text, ToolStart  # noqa: E402
 from worker import brain_config, read_persona  # noqa: E402
 
 TESTS = [
@@ -33,9 +33,10 @@ async def timed(lane: Lane, text: str, limit: float) -> dict:
     parts: list[str] = []
     tools: list[str] = []
     done: Done | None = None
+    api_error: ApiError | None = None
 
     async def follow() -> None:
-        nonlocal first, done
+        nonlocal first, done, api_error
         async for event in turn.events():
             if isinstance(event, Text):
                 first = first or time.monotonic()
@@ -44,6 +45,8 @@ async def timed(lane: Lane, text: str, limit: float) -> dict:
                 tools.append(event.name)
             elif isinstance(event, Permission):
                 await lane.answer(event, False, "This is a health check; don't do anything that needs approval.")
+            elif isinstance(event, ApiError):
+                api_error = event
             elif isinstance(event, Done):
                 done = event
 
@@ -52,12 +55,18 @@ async def timed(lane: Lane, text: str, limit: float) -> dict:
     except asyncio.TimeoutError:
         await lane.interrupt()
     return {
-        "ok": bool(done and done.ok),
+        "ok": bool(done and done.ok and not api_error),
         "first_s": round(first - started, 1) if first else None,
         "total_s": round(time.monotonic() - started, 1) if done else None,
         "reply": (done.text if done and done.text else "".join(parts)).strip()[:300],
         "tools": tools,
-        "error": None if done else f"no answer within {limit:.0f}s",
+        "error": (
+            f"{api_error.kind}: {api_error.text}" if api_error
+            else None if done and done.ok
+            else (done.text or done.error or "failed") if done
+            else f"no answer within {limit:.0f}s"
+        ),
+        "api_error": api_error.kind if api_error else None,
     }
 
 
@@ -77,6 +86,7 @@ async def main() -> None:
             result["test"] = name
             if name == "simple question":
                 result["connectors"] = lane.mcp_status
+                result["credentials"] = lane.api_key_source
             print(json.dumps(result), flush=True)
     finally:
         await lane.close()

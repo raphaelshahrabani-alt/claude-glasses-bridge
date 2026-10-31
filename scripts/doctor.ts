@@ -7,7 +7,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig } from '../src/config.ts'
 import {
+  API_ERROR_HELP,
   claudeLaunch,
+  credentials,
   elapsedSeconds,
   firstWordsVerdict,
   median,
@@ -108,6 +110,10 @@ async function checkDirect() {
   const python = process.env.GLASSES_VOICE_PYTHON ?? join(config.dataDir, 'voice-venv', 'bin', 'python')
   if (!existsSync(python)) bad('the voice worker is not set up yet', 'run ~/claude-glasses-bridge/bin/glasses-voice --setup')
 
+  if (process.env.ANTHROPIC_API_KEY && process.env.GLASSES_USE_API_KEY !== '1') {
+    info('(ANTHROPIC_API_KEY is set in your shell; the voice worker leaves it out, so Claude Code uses your Claude login)')
+  }
+
   const persona = process.env.GLASSES_PERSONA ?? join(config.dataDir, 'persona.md')
   if (existsSync(persona)) ok(`your profile is loaded on every call (${persona})`)
   else info(`(no profile yet: copy templates/business-partner.md to ${persona} and fill it in)`)
@@ -138,6 +144,10 @@ async function checkDirect() {
     bad(`Claude Code quit unexpectedly ${stats.crashes} time${stats.crashes === 1 ? '' : 's'}`, `read the "glasses: voice" window or ${logFile}`)
   }
   for (const e of stats.errors.slice(-3)) info(`voice error: ${e}`)
+  if (stats.apiError) {
+    const help = API_ERROR_HELP[stats.apiError]
+    bad(`on your last call, ${help?.say ?? `Claude Code got an API error (${stats.apiError})`}`, help?.fix ?? `read ${logFile}`)
+  }
   for (const name of ['gmail', 'calendar']) {
     const down = stats.notConnected.find(n => n.toLowerCase().includes(name))
     if (down) bad(`${down} was not connected the last time Claude Code started`, 'run claude in Terminal, type /mcp, choose it and log in')
@@ -180,7 +190,12 @@ async function checkDirect() {
     } else {
       bad(`${row.test}: ${row.error ?? 'failed'}`, `read ${logFile}`)
     }
-    if (row.reply) info(`Claude said: ${JSON.stringify(row.reply)}`)
+    if (row.reply && !row.api_error) info(`Claude said: ${JSON.stringify(row.reply)}`)
+    if (row.credentials) {
+      const c = credentials(row.credentials)
+      if (c.ok) ok(c.say)
+      else bad(c.say, c.fix)
+    }
     for (const [name, status] of Object.entries((row.connectors ?? {}) as Record<string, string>)) {
       if (!/gmail|calendar/i.test(name)) continue
       if (status === 'connected') ok(`${name} is connected`)

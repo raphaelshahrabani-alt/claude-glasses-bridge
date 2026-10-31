@@ -14,7 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from brain import Brain, BrainConfig, CallLog, wants_look, yes_no  # noqa: E402
+from brain import API_ERRORS, Brain, BrainConfig, CallLog, wants_look, yes_no  # noqa: E402
 from claude_lane import LaneConfig, Permission  # noqa: E402
 
 FAKE = str(HERE / "fake_claude.py")
@@ -36,6 +36,7 @@ class BrainTest(unittest.IsolatedAsyncioTestCase):
         self.log = self.dir / "fake.log"
         os.environ["FAKE_CLAUDE_LOG"] = str(self.log)
         os.environ.pop("FAKE_SESSION", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
         self.spoken: list[str] = []
         self.brains: list[Brain] = []
 
@@ -144,6 +145,39 @@ class BrainTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await until(lambda: self.spoken))
         self.assertIn("lost my connection", self.spoken[0])
         self.assertEqual(await self.ask(brain, "hello"), "Hi there.")
+
+    async def test_uses_the_claude_login_not_an_api_key(self):
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test"
+        brain = await self.brain()
+        await self.ask(brain, "hello")
+        self.assertEqual({r["value"] for r in self.fake_log("api_key")}, {False})
+        self.assertEqual(brain.lanes[0].api_key_source, "none")
+
+    async def test_api_key_when_asked_for(self):
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test"
+        config = self.config()
+        config.lane.use_api_key = True
+        brain = Brain(config, speak=self.spoken.append)
+        self.brains.append(brain)
+        await brain.start()
+        await self.ask(brain, "hello")
+        self.assertEqual({r["value"] for r in self.fake_log("api_key")}, {True})
+        self.assertEqual(brain.lanes[0].api_key_source, "ANTHROPIC_API_KEY")
+
+    async def test_out_of_credit_is_explained_once(self):
+        brain = await self.brain()
+        self.assertEqual(await self.ask(brain, "it broke"), API_ERRORS["billing_error"][0])
+        self.assertEqual(
+            await self.ask(brain, "it broke again"), "Same problem as before: the Anthropic account is out of credit."
+        )
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.spoken, [])
+
+    async def test_older_claude_code_errors_are_explained_too(self):
+        brain = await self.brain()
+        self.assertEqual(await self.ask(brain, "oldbroke"), "Credit balance is too low")
+        self.assertTrue(await until(lambda: self.spoken))
+        self.assertEqual(self.spoken, [API_ERRORS["billing_error"][0]])
 
     async def test_ignores_filler_words(self):
         brain = await self.brain()

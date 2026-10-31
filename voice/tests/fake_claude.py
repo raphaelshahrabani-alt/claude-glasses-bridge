@@ -105,6 +105,17 @@ def handle(content):
         record("permission", behavior)
         say("Done, I made the file." if behavior == "allow" else "Okay, I skipped it.", 2)
         result("done")
+    elif "oldbroke" in words:
+        # an older Claude Code: the API error arrives as plain text
+        out({"type": "assistant", "parent_tool_use_id": None, "session_id": session,
+             "message": {"content": [{"type": "text", "text": "Credit balance is too low"}]}})
+        out({"type": "result", "subtype": "success", "is_error": True, "result": "Credit balance is too low",
+             "session_id": session})
+    elif "broke" in words:
+        out({"type": "assistant", "parent_tool_use_id": None, "session_id": session, "error": "billing_error",
+             "message": {"content": [{"type": "text", "text": "Credit balance is too low"}]}})
+        out({"type": "result", "subtype": "success", "is_error": True, "result": "Credit balance is too low",
+             "session_id": session})
     elif "crash" in words:
         say("Oh no")
         os._exit(3)
@@ -118,7 +129,9 @@ def handle(content):
 
 def main():
     record("argv", args)
+    record("api_key", "ANTHROPIC_API_KEY" in os.environ)
     out({"type": "system", "subtype": "init", "session_id": session,
+         "apiKeySource": "ANTHROPIC_API_KEY" if "ANTHROPIC_API_KEY" in os.environ else "none",
          "mcp_servers": [{"name": "gmail", "status": "connected"}]})
     worker = None
     for line in sys.stdin:

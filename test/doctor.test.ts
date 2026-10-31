@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { claudeLaunch, elapsedSeconds, firstWordsVerdict, parseVoiceLog, median, parseBridgeLog, patchState, verdict } from '../src/doctor.ts'
+import { claudeLaunch, credentials, elapsedSeconds, firstWordsVerdict, parseVoiceLog, median, parseBridgeLog, patchState, verdict } from '../src/doctor.ts'
 
 const root = join(import.meta.dir, '..')
 
@@ -98,6 +98,22 @@ describe('parseVoiceLog', () => {
     expect(firstWordsVerdict(2.1)).toBe('good')
     expect(firstWordsVerdict(4)).toBe('slow')
     expect(firstWordsVerdict(9)).toBe('very slow')
+  })
+
+  test('remembers an API error until an answer succeeds', () => {
+    const failing = [
+      '2026-10-31 15:00:00,000 [10] line 1: Claude API error (billing_error): Credit balance is too low',
+      '2026-10-31 15:00:00,100 [10] line 1: done after 0.9s, 0 tool call(s), failed: success',
+    ]
+    expect(parseVoiceLog(failing.join('\n')).apiError).toBe('billing_error')
+    const fixed = [...failing, '2026-10-31 15:05:00,000 [10] line 1: done after 2.0s, 0 tool call(s)']
+    expect(parseVoiceLog(fixed.join('\n')).apiError).toBeUndefined()
+  })
+
+  test('credentials', () => {
+    expect(credentials('none')).toEqual({ ok: true, say: 'Claude Code uses your Claude subscription login' })
+    expect(credentials('ANTHROPIC_API_KEY').ok).toBe(false)
+    expect(credentials('/login managed key').fix).toContain('/logout')
   })
 })
 
@@ -227,7 +243,7 @@ describe('glasses-doctor with the direct voice worker', () => {
     // stands in for the voice worker's Python running voice/selftest.py
     writeFileSync(python, `#!/bin/bash
 echo '{"test": "startup", "ok": true, "total_s": 0.8, "model": "sonnet", "effort": "low", "cwd": "/Users/me/Desktop"}'
-echo '{"test": "simple question", "ok": true, "first_s": 2.4, "total_s": 2.5, "reply": "OK", "tools": [], "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth", "plugin:small-business:hubspot": "failed"}}'
+echo '{"test": "simple question", "ok": true, "first_s": 2.4, "total_s": 2.5, "reply": "OK", "tools": [], "credentials": "none", "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth", "plugin:small-business:hubspot": "failed"}}'
 echo '{"test": "email check", "ok": true, "first_s": 2.6, "total_s": 5.1, "reply": "Three.", "tools": ["mcp__gmail__search_threads"]}'
 `)
     chmodSync(python, 0o755)
@@ -271,6 +287,7 @@ echo '{"test": "email check", "ok": true, "first_s": 2.6, "total_s": 5.1, "reply
     expect(out).toContain('14:00:04  Claude: Checking your inbox.')
     expect(out).toContain('✓ Claude Code started in 0.8s (sonnet, effort low, in /Users/me/Desktop)')
     expect(out).toContain('✓ simple question: first words after 2.4s, done in 2.5s')
+    expect(out).toContain('✓ Claude Code uses your Claude subscription login')
     expect(out).toContain('✓ plugin:small-business:gmail is connected')
     expect(out).toContain('✗ plugin:small-business:google-calendar is needs-auth')
     expect(out).not.toContain('hubspot')

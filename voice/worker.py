@@ -132,6 +132,7 @@ def brain_config(persona: str) -> BrainConfig:
         permission_mode=os.environ.get("GLASSES_PERMISSION_MODE", "auto") or None,
         add_dirs=env_dirs("GLASSES_ADD_DIRS"),
         system_prompt_file=system_prompt_file(persona),
+        use_api_key=os.environ.get("GLASSES_USE_API_KEY") == "1",
     )
     return BrainConfig(
         lane=lane,

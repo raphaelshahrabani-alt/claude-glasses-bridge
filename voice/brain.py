@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from claude_lane import BlockEnd, Done, Lane, LaneConfig, Permission, Text, ToolStart, Turn
+from claude_lane import ApiError, BlockEnd, Done, Lane, LaneConfig, Permission, Text, ToolStart, Turn
 
 log = logging.getLogger("glasses.voice")
 
@@ -49,6 +49,40 @@ LOOK = re.compile(
 
 ACKS = ["On it.", "Let me check.", "One sec.", "Okay, looking into it."]
 STILL = ["Still on it.", "Still working on that.", "Still going, almost there I hope."]
+
+
+# What to say when Claude Code can't reach Claude, in full and when it happens again.
+API_ERRORS = {
+    "billing_error": (
+        "Claude Code can't answer: the Anthropic account it's using is out of credit. "
+        "Run glasses doctor on your Mac to see which account that is.",
+        "the Anthropic account is out of credit",
+    ),
+    "authentication_failed": (
+        "Claude Code isn't logged in. On your Mac, open Terminal, run claude, and type slash login.",
+        "Claude Code isn't logged in",
+    ),
+    "rate_limit": (
+        "You've hit your Claude usage limit for now. It should reset in a few hours.",
+        "you're still at your Claude usage limit",
+    ),
+    "server_error": (
+        "Claude's servers are having trouble. Try again in a minute.",
+        "Claude's servers are still having trouble",
+    ),
+}
+
+
+def api_error_kind(text: str) -> str | None:
+    """For a Claude Code too old to label its API errors."""
+    lowered = text.lower()
+    if "credit balance" in lowered:
+        return "billing_error"
+    if "invalid api key" in lowered or "/login" in lowered or "not logged in" in lowered:
+        return "authentication_failed"
+    if "usage limit" in lowered or "rate limit" in lowered:
+        return "rate_limit"
+    return None
 
 
 def yes_no(words: str) -> bool | None:
@@ -150,6 +184,7 @@ class Runner:
         self.segment: list[str] = []
         self.drop_until_tool = False
         self.cancelled = False
+        self.api_error: ApiError | None = None
         self.tools = 0
         self.first_words_at: float | None = None
         self.last_spoke = time.monotonic()
@@ -229,6 +264,15 @@ class Runner:
                             self._live(self.brain._pick(ACKS))
                         self._end_live()
                     await self.brain._ask_permission(event, self.lane)
+                elif isinstance(event, ApiError):
+                    self.api_error = event
+                    explained = self.brain._explain(event.kind, event.text)
+                    if self.attached:
+                        self.live_text.clear()
+                        self._live(explained)
+                        self._end_live()
+                    else:
+                        await self._say(explained)
                 elif isinstance(event, Done):
                     await self._finish(event)
         except Exception:
@@ -248,7 +292,7 @@ class Runner:
             self.lane.name, took, self.tools, "" if done.ok else f", failed: {done.error}",
         )
         final = "" if self.drop_until_tool else "".join(self.segment).strip()
-        if self.cancelled:
+        if self.cancelled or self.api_error:
             self._end_live()
             return
         if self.attached:
@@ -264,6 +308,9 @@ class Runner:
     def _failure(self, done: Done) -> str:
         if done.error and "stopped" in done.error:
             return "Sorry, I lost my connection to Claude Code. Ask me again and I'll start fresh."
+        kind = api_error_kind(done.text)
+        if kind:
+            return self.brain._explain(kind, done.text)
         return "Sorry, that didn't work."
 
     async def _watch(self) -> None:
@@ -311,6 +358,7 @@ class Brain:
         self._spawning: asyncio.Task[Lane | None] | None = None
         self._pick_counter = 0
         self._turns_in_primary = 0
+        self._last_api_error: tuple[str, float] | None = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -552,6 +600,15 @@ class Brain:
         ]
 
     # ---- speaking --------------------------------------------------------
+
+    def _explain(self, kind: str, text: str) -> str:
+        """What to say about an API error; shorter when it's the same one again."""
+        full, short = API_ERRORS.get(kind, (f"Sorry, Claude Code ran into an error: {text[:150]}", "the same error"))
+        last = self._last_api_error
+        self._last_api_error = (kind, time.monotonic())
+        if last and last[0] == kind and time.monotonic() - last[1] < 300:
+            return f"Same problem as before: {short}."
+        return full
 
     def _pick(self, options: list[str]) -> str:
         self._pick_counter += 1

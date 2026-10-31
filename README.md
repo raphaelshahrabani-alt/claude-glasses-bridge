@@ -105,6 +105,7 @@ Other settings that can go in `voice.env` (restart the voice window after changi
 | `GLASSES_LINES` | `3` | How many requests can run at once. |
 | `GLASSES_RESUME_MINUTES` | `30` | |
 | `GLASSES_FINISH_AFTER_HANGUP_S` | `600` | |
+| `GLASSES_USE_API_KEY` | off | Claude Code in the voice worker uses your Claude subscription login, and leaves out any `ANTHROPIC_API_KEY` in your environment, which `claude -p` would otherwise always bill instead. Set to `1` to pay with the key. |
 
 Speech-to-text listens for your project names: it takes them from the "My projects" list in your profile, plus any names you put one per line in `~/.claude-glasses-bridge/keyterms.txt`.
 
@@ -200,6 +201,7 @@ The bridge listens on `127.0.0.1` by default, so only processes on the same comp
 
 ## Troubleshooting
 
+- **It says "credit balance is too low":** Claude Code was paying with an Anthropic API key instead of your Claude subscription. The voice worker now leaves `ANTHROPIC_API_KEY` out; update and restart start-glasses. If it still happens, `glasses-doctor`'s live test says which account Claude Code uses (an Anthropic Console login also bills prepaid credit: `/logout`, then `/login` with your Claude account).
 - **"Agent left the call" or no answer with the direct voice:** look at the "glasses: voice" window and `~/.claude-glasses-bridge/voice.log`, then run `glasses-doctor`. If LiveKit Inference ran out of credits, add a Deepgram key (see [Direct voice](#direct-voice)).
 - **Run `bun run talk` in a plain terminal, never in Claude Code's prompt.** If Claude runs it, Claude is stuck waiting on a command that is waiting for Claude.
 - **`/mcp` shows glasses as failed:** usually Bun isn't on the `PATH` Claude Code sees. Register it with the full path: `claude mcp add glasses --scope user -- "$HOME/.bun/bin/bun" "$PWD/src/server.ts"`.

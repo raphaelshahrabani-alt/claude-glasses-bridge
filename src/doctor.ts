@@ -111,6 +111,8 @@ export interface VoiceStats {
   crashes: number
   /** The connectors the most recent Claude Code start could not connect. */
   notConnected: string[]
+  /** An API error (billing_error, authentication_failed, ...) with no successful answer since. */
+  apiError?: string
 }
 
 const VOICE_LINE_RE = /^(\S+ \S+) \[\d+\] (.*)$/
@@ -124,7 +126,10 @@ export function parseVoiceLog(text: string): VoiceStats {
     const [, at, msg] = parsed
     let m: RegExpExecArray | null
     if ((m = /: first words after ([\d.]+)s$/.exec(msg))) stats.firstWords.push(Number(m[1]))
-    else if ((m = /: done after ([\d.]+)s, (\d+) tool call/.exec(msg))) stats.done.push({ s: Number(m[1]), tools: Number(m[2]) })
+    else if ((m = /: done after ([\d.]+)s, (\d+) tool call/.exec(msg))) {
+      stats.done.push({ s: Number(m[1]), tools: Number(m[2]) })
+      if (!msg.includes(', failed:')) stats.apiError = undefined
+    } else if ((m = /: Claude API error \(([^)]*)\)/.exec(msg))) stats.apiError = m[1]
     else if (msg.startsWith('call started in room')) {
       stats.calls++
       stats.lastCall = at
@@ -141,4 +146,41 @@ export function firstWordsVerdict(s: number): string {
   if (s < 3.5) return 'good'
   if (s < 6) return 'slow'
   return 'very slow'
+}
+
+/** What a Claude Code credential source means for the user. */
+export function credentials(source: string): { ok: boolean; say: string; fix?: string } {
+  switch (source) {
+    case 'none':
+      return { ok: true, say: 'Claude Code uses your Claude subscription login' }
+    case 'ANTHROPIC_API_KEY':
+      return {
+        ok: false,
+        say: 'Claude Code is paying with an API key (ANTHROPIC_API_KEY) instead of your Claude subscription',
+        fix: 'take GLASSES_USE_API_KEY=1 out of ~/.claude-glasses-bridge/voice.env, then restart start-glasses',
+      }
+    case 'apiKeyHelper':
+      return {
+        ok: false,
+        say: 'Claude Code gets an API key from an apiKeyHelper setting instead of your Claude subscription',
+        fix: 'remove "apiKeyHelper" from ~/.claude/settings.json',
+      }
+    case '/login managed key':
+      return {
+        ok: false,
+        say: 'Claude Code is logged in with an Anthropic Console account (prepaid API credit), not your Claude subscription',
+        fix: 'run claude in Terminal, type /logout, then /login and choose your Claude account',
+      }
+    default:
+      return { ok: true, say: `Claude Code's credentials: ${source}` }
+  }
+}
+
+export const API_ERROR_HELP: Record<string, { say: string; fix: string }> = {
+  billing_error: {
+    say: 'Claude Code said the credit balance is too low',
+    fix: 'run glasses-doctor without --quick: its live test shows which account Claude Code uses',
+  },
+  authentication_failed: { say: "Claude Code isn't logged in", fix: 'run claude in Terminal and type /login' },
+  rate_limit: { say: 'you hit your Claude usage limit', fix: 'wait for it to reset, or use a lighter model (GLASSES_MODEL=haiku)' },
 }

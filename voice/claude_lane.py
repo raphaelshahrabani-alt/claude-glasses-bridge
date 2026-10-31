@@ -51,6 +51,9 @@ class LaneConfig:
     allowed_tools: list[str] = field(default_factory=lambda: list(READ_ONLY_TOOLS))
     resume: str | None = None
     env: dict[str, str] | None = None
+    # With ANTHROPIC_API_KEY in the environment, `claude -p` always bills that
+    # key instead of the user's Claude subscription, so it is left out unless asked for.
+    use_api_key: bool = False
 
     def command(self) -> list[str]:
         cmd = [
@@ -114,6 +117,13 @@ class Permission:
 
 
 @dataclass
+class ApiError:
+    """Claude Code could not get an answer from Claude: billing, login, limits."""
+    kind: str  # billing_error, authentication_failed, rate_limit, server_error, invalid_request, unknown
+    text: str
+
+
+@dataclass
 class Done:
     text: str
     ok: bool
@@ -122,7 +132,7 @@ class Done:
     error: str | None = None
 
 
-Event = Union[Text, BlockEnd, ToolStart, Permission, Done]
+Event = Union[Text, BlockEnd, ToolStart, Permission, ApiError, Done]
 
 
 class Turn:
@@ -161,6 +171,7 @@ class Lane:
         self.config = config
         self.name = name
         self.session_id: str | None = None
+        self.api_key_source: str | None = None
         self.mcp_status: dict[str, str] = {}
         self.turn: Turn | None = None
         self.ready = asyncio.Event()
@@ -189,6 +200,8 @@ class Lane:
         # Keep a parent Claude Code session's identity out of this one.
         for key in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT"):
             env.pop(key, None)
+        if not self.config.use_api_key and env.pop("ANTHROPIC_API_KEY", None):
+            log.info("%s: leaving ANTHROPIC_API_KEY out, so Claude Code uses your Claude login", self.name)
         self.started_at = time.monotonic()
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -328,6 +341,10 @@ class Lane:
         if kind == "system":
             if message.get("subtype") == "init":
                 self.session_id = message.get("session_id") or self.session_id
+                source = message.get("apiKeySource")
+                if source and source != self.api_key_source:
+                    self.api_key_source = source
+                    log.info("%s: Claude credentials: %s", self.name, source)
                 for server in message.get("mcp_servers") or []:
                     self.mcp_status[server.get("name", "?")] = server.get("status", "?")
                 failed = [n for n, s in self.mcp_status.items() if s not in ("connected", "pending")]
@@ -361,10 +378,16 @@ class Lane:
             return
 
         if kind == "assistant":
+            content = (message.get("message") or {}).get("content") or []
+            if top_level and message.get("error"):
+                text = " ".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
+                log.error("%s: Claude API error (%s): %s", self.name, message["error"], text[:300])
+                self._emit(ApiError(str(message["error"]), text))
+                return
             # Older Claude Code without partial messages: whole blocks only.
             if not top_level or self._streaming_seen:
                 return
-            for block in (message.get("message") or {}).get("content") or []:
+            for block in content:
                 if block.get("type") == "text" and block.get("text"):
                     self._emit(Text(block["text"]))
                     self._emit(BlockEnd())
