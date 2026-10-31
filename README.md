@@ -66,6 +66,16 @@ Claude Code can multitask. For a long job it replies at once with what it's star
 
 The patch also keeps the glasses camera off during calls. When you ask about something in front of you, the worker turns it on for one picture and sends that to Claude Code, so the capture light doesn't stay on (iPhone app only).
 
+## A personal agent and business partner
+
+Three things turn the glasses session into an agent across your work:
+
+- **One folder holding all your projects.** Start Claude Code there, for example `start-glasses ~/Desktop`. It can then work in any project and create new ones next to them. Other folders can be added as extra arguments.
+- **A profile.** Copy `templates/business-partner.md` to `~/.claude-glasses-bridge/persona.md` and fill it in: who you are, your projects and where they live, where new projects go, and what Claude must check with you first. `start-glasses` loads it with `--append-system-prompt-file`.
+- **Email and calendar.** In the glasses Claude Code window, run `/mcp`, choose Gmail (and Google Calendar, Drive, or anything else you use), and sign in once in the browser.
+
+Whatever your profile says, the bridge tells Claude never to act in your name without a clear yes. That covers sending email or messages, posting or publishing, spending money, pushing to a main branch or deploying, and deleting your files or data. Permission prompts are read out on the glasses for you to approve by voice.
+
 ## Checking the setup
 
 `bin/glasses-doctor` checks each piece: the Claude Code session and bridge, VisionClaw's gateway, the voice worker and its mode, and the VisionClaw patch version. Anything wrong gets a ✗ and the fix. It then lists your recent questions with how long Claude Code took for each. Finally it sends two live test questions through the bridge and times them: a plain one, and one that runs `git status` in the project, to show Claude Code can work in your code. `--quick` skips the live questions.

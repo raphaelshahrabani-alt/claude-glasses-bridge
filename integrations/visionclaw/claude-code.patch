@@ -1,5 +1,5 @@
 diff --git a/agent/main.py b/agent/main.py
-index 5d3659e..a3e14b2 100644
+index 5d3659e..57c4fa0 100644
 --- a/agent/main.py
 +++ b/agent/main.py
 @@ -261,6 +261,10 @@ class Userdata:
@@ -13,7 +13,7 @@ index 5d3659e..a3e14b2 100644
      # The Browser Use run whose live-view card is currently on screen. A browse
      # run dismisses the card only while it still owns this slot, so an earlier
      # run finishing cannot tear down a newer run's card (the double-fire race).
-@@ -365,6 +369,74 @@ BROWSE_KEEPALIVE_S = 90
+@@ -365,6 +369,78 @@ BROWSE_KEEPALIVE_S = 90
  # instruction blob for a voice model, not an answer, so never relay it as one.
  GATEWAY_DEFERRAL_PREFIX = "[task started]"
  
@@ -22,6 +22,9 @@ index 5d3659e..a3e14b2 100644
 +# not offered at all. The bridge speaks the same chat-completions contract as
 +# the gateway, including the GATEWAY_DEFERRAL_PREFIX for long tasks.
 +CLAUDE_CODE_URL = os.environ.get("CLAUDE_CODE_URL", "").rstrip("/")
++# Bumped with each change to claude-glasses-bridge's patch; glasses-doctor
++# reads it to tell whether the latest one is applied.
++CLAUDE_CODE_PATCH_VERSION = 5
 +
 +# CLAUDE_CODE_ONLY=1 pairs the voice model with Claude Code: the voice model
 +# holds the conversation and answers what it is sure of, and everything about
@@ -64,8 +67,9 @@ index 5d3659e..a3e14b2 100644
 +- current facts from the web (weather, news, scores, opening hours), with quick_search
 +
 +Send these to claude_code:
-+- anything about the user's code, files, projects, computer or accounts
-+- writing or changing code, running commands, tests or builds, git
++- anything about the user's projects, code, files, computer, business, email, calendar or accounts
++- building, writing or changing code, running commands, tests or builds, git
++- creating something new: a project, a document, a plan
 +- anything you are not sure of. Never guess, and never make up details about their projects.
 +Pass the request in the user's own words, complete, with any earlier context it needs. Before
 +calling it, acknowledge in a few natural words ("Let me check", "On it", "One sec") and vary them.
@@ -88,7 +92,7 @@ index 5d3659e..a3e14b2 100644
  _relay_tasks: set[asyncio.Task] = set()
  
  
-@@ -456,6 +528,77 @@ async def _drain_pending(user_id: str) -> list[str]:
+@@ -456,6 +532,77 @@ async def _drain_pending(user_id: str) -> list[str]:
          return []
  
  
@@ -166,7 +170,7 @@ index 5d3659e..a3e14b2 100644
  def _card_text(raw: str, limit: int) -> str:
      """Markdown-ish search prose -> plain card text."""
      text = re.sub(r"[*_`#]+", "", raw)
-@@ -684,6 +827,7 @@ async def _run_delegated(
+@@ -684,6 +831,7 @@ async def _run_delegated(
      tool: str,
      job: "asyncio.Future[str]",
      on_deliver: Callable[[str | None], Awaitable[None]] | None = None,
@@ -174,7 +178,7 @@ index 5d3659e..a3e14b2 100644
  ) -> str:
      """Shared delegation loop for slow tools (execute, browse): hold the turn a
      few seconds; if the result is not back, free the model, heartbeat, then relay
-@@ -695,7 +839,7 @@ async def _run_delegated(
+@@ -695,7 +843,7 @@ async def _run_delegated(
      tracer = ctx.userdata.tracer
      user_id = ctx.userdata.user_id
      task_start = time.monotonic()
@@ -183,7 +187,7 @@ index 5d3659e..a3e14b2 100644
      if done:
          result = await job
          logger.info("%s quick result: user=%s len=%d t=%.1f", tool, user_id, len(result), time.monotonic() - task_start)
-@@ -845,6 +989,76 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
+@@ -845,6 +993,76 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
      return await _run_delegated(ctx, task, "execute", job)
  
  
@@ -260,7 +264,7 @@ index 5d3659e..a3e14b2 100644
  @function_tool
  async def browse(ctx: RunContext[Userdata], task: str) -> str:
      """The computer-use / shopping / browser agent: drives a real web browser on a live
-@@ -1237,6 +1451,8 @@ async def entrypoint(ctx: JobContext):
+@@ -1237,6 +1455,8 @@ async def entrypoint(ctx: JobContext):
              )
          if role == "assistant":
              userdata.spoken.append(text)
@@ -269,7 +273,7 @@ index 5d3659e..a3e14b2 100644
          tracer.emit(
              "user_utterance" if role == "user" else "agent_utterance",
              text=text,
-@@ -1245,8 +1461,13 @@ async def entrypoint(ctx: JobContext):
+@@ -1245,8 +1465,13 @@ async def entrypoint(ctx: JobContext):
  
      await session.start(
          agent=Agent(
@@ -285,7 +289,7 @@ index 5d3659e..a3e14b2 100644
          ),
          room=ctx.room,
          # Video is opt-in (RoomInputOptions.video_enabled defaults to False);
-@@ -1259,7 +1480,17 @@ async def entrypoint(ctx: JobContext):
+@@ -1259,7 +1484,17 @@ async def entrypoint(ctx: JobContext):
      # gateway; deliver them up front so a hangup never discards an answer.
      # Dead app connections ride the same opening beat: one brief mention,
      # then silence -- the fix lives in Settings -> Connected Apps.

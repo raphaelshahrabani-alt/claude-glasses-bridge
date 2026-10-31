@@ -48,12 +48,14 @@ export function median(values: number[]): number | undefined {
 
 export type PatchState = 'missing' | 'unpatched' | 'old' | 'current'
 
+/** CLAUDE_CODE_PATCH_VERSION in integrations/visionclaw/claude-code.patch; bump both together. */
+export const PATCH_VERSION = 5
+
 /** Which version of integrations/visionclaw/claude-code.patch a VisionClaw agent/main.py carries. */
 export function patchState(mainPy: string | null): PatchState {
   if (mainPy === null) return 'missing'
   if (!mainPy.includes('def claude_code(')) return 'unpatched'
-  // the current patch passes the user's own transcribed words to Claude Code
-  return mainPy.includes('def _with_user_words(') ? 'current' : 'old'
+  return mainPy.includes(`CLAUDE_CODE_PATCH_VERSION = ${PATCH_VERSION}\n`) ? 'current' : 'old'
 }
 
 export function seconds(ms: number): string {

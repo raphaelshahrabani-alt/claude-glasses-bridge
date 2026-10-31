@@ -86,6 +86,16 @@ describe('start-glasses', () => {
     expect(existsSync(join(env.root, '.claude-glasses-bridge', 'permission-relay'))).toBe(false)
   })
 
+  test('loads the profile in persona.md when there is one', () => {
+    const env = setup({ listening: [8788], workerRunning: true })
+    expect(run(env).windows[0][1]).not.toContain('--append-system-prompt-file')
+    const persona = join(env.root, '.claude-glasses-bridge', 'persona.md')
+    writeFileSync(persona, '# Who you are to me\n')
+    const { windows, out } = run(env)
+    expect(windows.at(-1)![1]).toEndWith(`--append-system-prompt-file ${persona}`)
+    expect(out).toContain(`with your profile from ${persona}`)
+  })
+
   test('stops with a pointer to the guide when the worker script is missing', () => {
     const env = setup({ withStartScript: false })
     const { code, err, windows } = run(env)

@@ -14,6 +14,11 @@
 # GLASSES_EFFORT and GLASSES_PERMISSION_MODE. Permission prompts that do come
 # up are read out on the glasses to approve by voice; GLASSES_PERMISSION_RELAY=0
 # turns that off.
+#
+# If ~/.claude-glasses-bridge/persona.md exists (start from
+# templates/business-partner.md), Claude Code loads it as extra instructions:
+# who you are, your projects, and what it must check with you first.
+# GLASSES_PERSONA points at a different file.
 set -euo pipefail
 
 visionclaw="${VISIONCLAW_DIR:-$HOME/VisionClaw}"
@@ -24,6 +29,7 @@ for dir in "$@"; do
   extra_dirs+=("$(cd "$dir" && pwd)")
 done
 data_dir="${GLASSES_DATA_DIR:-$HOME/.claude-glasses-bridge}"
+persona="${GLASSES_PERSONA:-$data_dir/persona.md}"
 model="${GLASSES_MODEL:-sonnet}"
 effort="${GLASSES_EFFORT:-low}"
 permission_mode="${GLASSES_PERMISSION_MODE:-auto}"
@@ -88,10 +94,14 @@ else
   for dir in ${extra_dirs[@]+"${extra_dirs[@]}"}; do
     claude_cmd+="$(printf ' --add-dir %q' "$dir")"
   done
+  if [[ -f "$persona" ]]; then
+    claude_cmd+="$(printf ' --append-system-prompt-file %q' "$persona")"
+  fi
   open_window "glasses: claude" "$claude_cmd"
   echo "claude:  started in $project ($model, effort $effort, $permission_mode permissions)"
   for dir in ${extra_dirs[@]+"${extra_dirs[@]}"}; do
     echo "         also has access to $dir"
   done
+  if [[ -f "$persona" ]]; then echo "         with your profile from $persona"; fi
   echo "         In its window, choose \"I am using this for local development\"."
 fi
