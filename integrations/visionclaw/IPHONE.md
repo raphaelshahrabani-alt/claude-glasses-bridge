@@ -214,8 +214,10 @@ echo "alias start-glasses='~/claude-glasses-bridge/bin/start-glasses'" >> ~/.zsh
 Then, in a new Terminal window:
 
 ```bash
-start-glasses ~/path/to/your-project
+start-glasses ~/Desktop/poker-tracker ~/Desktop/another-project
 ```
+
+Claude Code works in the first folder and can also read and change the others. List every project you want to ask about: a project left off the list makes Claude stop and ask for permission on the Mac's screen, and the glasses call just waits.
 
 In the Claude Code window, choose "I am using this for local development". Then start a call from the phone: open the app, press the Action Button, or say "Hey Siri, talk to VisionClaw".
 

@@ -1,8 +1,19 @@
 diff --git a/agent/main.py b/agent/main.py
-index 5d3659e..30f78a3 100644
+index 5d3659e..a3e14b2 100644
 --- a/agent/main.py
 +++ b/agent/main.py
-@@ -365,6 +365,74 @@ BROWSE_KEEPALIVE_S = 90
+@@ -261,6 +261,10 @@ class Userdata:
+     # Everything the assistant has said this session, in order; relay checks
+     # read it to confirm a delivered result was actually spoken.
+     spoken: list[str] = field(default_factory=list)
++    # What the user said this session, as transcribed, in order. claude_code
++    # passes the latest turns along so Claude Code sees the user's own words,
++    # not just the voice model's paraphrase.
++    heard: list[str] = field(default_factory=list)
+     # The Browser Use run whose live-view card is currently on screen. A browse
+     # run dismisses the card only while it still owns this slot, so an earlier
+     # run finishing cannot tear down a newer run's card (the double-fire race).
+@@ -365,6 +369,74 @@ BROWSE_KEEPALIVE_S = 90
  # instruction blob for a voice model, not an answer, so never relay it as one.
  GATEWAY_DEFERRAL_PREFIX = "[task started]"
  
@@ -22,10 +33,10 @@ index 5d3659e..30f78a3 100644
 +CLAUDE_CODE_ONLY = bool(CLAUDE_CODE_URL) and os.environ.get("CLAUDE_CODE_ONLY") == "1"
 +
 +# How long a claude_code call holds the voice model's turn before the answer is
-+# demoted to a follow-up. Shorter than QUICK_ANSWER_S: Claude Code says when it
-+# starts a long job, and holding the turn is what stops the user from talking
-+# about something else in the meantime.
-+CLAUDE_CODE_QUICK_ANSWER_S = float(os.environ.get("CLAUDE_CODE_QUICK_ANSWER_S", "8"))
++# demoted to a follow-up. Much shorter than QUICK_ANSWER_S: while the turn is
++# held the voice model cannot talk, and the user wants to keep the conversation
++# going while Claude Code works. Answers that take longer arrive as follow-ups.
++CLAUDE_CODE_QUICK_ANSWER_S = float(os.environ.get("CLAUDE_CODE_QUICK_ANSWER_S", "3"))
 +
 +CLAUDE_CODE_INSTRUCTIONS = """
 +
@@ -77,7 +88,7 @@ index 5d3659e..30f78a3 100644
  _relay_tasks: set[asyncio.Task] = set()
  
  
-@@ -456,6 +524,77 @@ async def _drain_pending(user_id: str) -> list[str]:
+@@ -456,6 +528,77 @@ async def _drain_pending(user_id: str) -> list[str]:
          return []
  
  
@@ -155,7 +166,7 @@ index 5d3659e..30f78a3 100644
  def _card_text(raw: str, limit: int) -> str:
      """Markdown-ish search prose -> plain card text."""
      text = re.sub(r"[*_`#]+", "", raw)
-@@ -684,6 +823,7 @@ async def _run_delegated(
+@@ -684,6 +827,7 @@ async def _run_delegated(
      tool: str,
      job: "asyncio.Future[str]",
      on_deliver: Callable[[str | None], Awaitable[None]] | None = None,
@@ -163,7 +174,7 @@ index 5d3659e..30f78a3 100644
  ) -> str:
      """Shared delegation loop for slow tools (execute, browse): hold the turn a
      few seconds; if the result is not back, free the model, heartbeat, then relay
-@@ -695,7 +835,7 @@ async def _run_delegated(
+@@ -695,7 +839,7 @@ async def _run_delegated(
      tracer = ctx.userdata.tracer
      user_id = ctx.userdata.user_id
      task_start = time.monotonic()
@@ -172,7 +183,7 @@ index 5d3659e..30f78a3 100644
      if done:
          result = await job
          logger.info("%s quick result: user=%s len=%d t=%.1f", tool, user_id, len(result), time.monotonic() - task_start)
-@@ -845,6 +985,66 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
+@@ -845,6 +989,76 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
      return await _run_delegated(ctx, task, "execute", job)
  
  
@@ -215,6 +226,16 @@ index 5d3659e..30f78a3 100644
 +        await _camera_command(room, False)
 +
 +
++def _with_user_words(task: str, heard: list[str]) -> str:
++    """The voice model passes a paraphrase. Add the user's own latest words, as
++    transcribed, so Claude Code can recover what the paraphrase lost."""
++    recent = [h for h in heard[-3:] if h]
++    if not recent:
++        return task
++    words = "\n".join(f"- {h}" for h in recent)
++    return f"{task}\n\nThe user's own words, from speech-to-text, most recent last:\n{words}"
++
++
 +@function_tool
 +async def claude_code(ctx: RunContext[Userdata], task: str, attach_view: bool = False) -> str:
 +    """Claude Code, running on the user's own computer with their projects open: answers
@@ -232,14 +253,23 @@ index 5d3659e..30f78a3 100644
 +        ctx.userdata.user_id, attach_view, len(image_b64 or "") * 3 // 4096, task[:200],
 +    )
 +    ctx.userdata.tracer.emit("agent_action", tool="claude_code", task=task, attached_view=bool(image_b64))
-+    job = asyncio.ensure_future(_claude_code_execute(task, image_b64))
++    job = asyncio.ensure_future(_claude_code_execute(_with_user_words(task, ctx.userdata.heard), image_b64))
 +    return await _run_delegated(ctx, task, "claude_code", job, quick_answer_s=CLAUDE_CODE_QUICK_ANSWER_S)
 +
 +
  @function_tool
  async def browse(ctx: RunContext[Userdata], task: str) -> str:
      """The computer-use / shopping / browser agent: drives a real web browser on a live
-@@ -1245,8 +1445,13 @@ async def entrypoint(ctx: JobContext):
+@@ -1237,6 +1451,8 @@ async def entrypoint(ctx: JobContext):
+             )
+         if role == "assistant":
+             userdata.spoken.append(text)
++        else:
++            userdata.heard.append(text)
+         tracer.emit(
+             "user_utterance" if role == "user" else "agent_utterance",
+             text=text,
+@@ -1245,8 +1461,13 @@ async def entrypoint(ctx: JobContext):
  
      await session.start(
          agent=Agent(
@@ -255,7 +285,7 @@ index 5d3659e..30f78a3 100644
          ),
          room=ctx.room,
          # Video is opt-in (RoomInputOptions.video_enabled defaults to False);
-@@ -1259,7 +1464,17 @@ async def entrypoint(ctx: JobContext):
+@@ -1259,7 +1480,17 @@ async def entrypoint(ctx: JobContext):
      # gateway; deliver them up front so a hangup never discards an answer.
      # Dead app connections ride the same opening beat: one brief mention,
      # then silence -- the fix lives in Settings -> Connected Apps.

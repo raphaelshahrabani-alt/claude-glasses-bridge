@@ -3,15 +3,27 @@
 # VisionClaw's gateway, its voice worker, and a Claude Code session with the
 # glasses channel. Pieces that are already running are left alone.
 #
-#   start-glasses [project-folder]     (default: the current folder)
+#   start-glasses [project-folder] [more-folders...]
+#
+# Claude Code works in the first folder (default: the current one) and may also
+# read and edit the others; without them, asking about another project stalls
+# on a permission prompt nobody can see from the glasses.
 #
 # Voice answers are only as fast as the model behind them, so Claude Code
 # starts on a quick model at low effort. Override with GLASSES_MODEL,
-# GLASSES_EFFORT and GLASSES_PERMISSION_MODE.
+# GLASSES_EFFORT and GLASSES_PERMISSION_MODE. Permission prompts that do come
+# up are read out on the glasses to approve by voice; GLASSES_PERMISSION_RELAY=0
+# turns that off.
 set -euo pipefail
 
 visionclaw="${VISIONCLAW_DIR:-$HOME/VisionClaw}"
 project="$(cd "${1:-$PWD}" && pwd)"
+if [[ $# -gt 0 ]]; then shift; fi
+extra_dirs=()
+for dir in "$@"; do
+  extra_dirs+=("$(cd "$dir" && pwd)")
+done
+data_dir="${GLASSES_DATA_DIR:-$HOME/.claude-glasses-bridge}"
 model="${GLASSES_MODEL:-sonnet}"
 effort="${GLASSES_EFFORT:-low}"
 permission_mode="${GLASSES_PERMISSION_MODE:-auto}"
@@ -60,11 +72,26 @@ else
   echo "worker:  started (keeps the Mac awake while it runs)"
 fi
 
+# The bridge reads this file when Claude Code starts it.
+mkdir -p "$data_dir"
+if [[ "${GLASSES_PERMISSION_RELAY:-1}" == 0 ]]; then
+  rm -f "$data_dir/permission-relay"
+else
+  touch "$data_dir/permission-relay"
+fi
+
 if listening "$bridge_port"; then
   echo "claude:  a session with the glasses channel is already running"
 else
-  open_window "glasses: claude" "$(printf 'cd %q && claude --dangerously-load-development-channels server:glasses --model %q --effort %q --permission-mode %q' \
+  claude_cmd="$(printf 'cd %q && claude --dangerously-load-development-channels server:glasses --model %q --effort %q --permission-mode %q' \
     "$project" "$model" "$effort" "$permission_mode")"
+  for dir in ${extra_dirs[@]+"${extra_dirs[@]}"}; do
+    claude_cmd+="$(printf ' --add-dir %q' "$dir")"
+  done
+  open_window "glasses: claude" "$claude_cmd"
   echo "claude:  started in $project ($model, effort $effort, $permission_mode permissions)"
+  for dir in ${extra_dirs[@]+"${extra_dirs[@]}"}; do
+    echo "         also has access to $dir"
+  done
   echo "         In its window, choose \"I am using this for local development\"."
 fi

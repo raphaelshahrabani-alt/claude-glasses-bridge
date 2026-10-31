@@ -52,8 +52,8 @@ export type PatchState = 'missing' | 'unpatched' | 'old' | 'current'
 export function patchState(mainPy: string | null): PatchState {
   if (mainPy === null) return 'missing'
   if (!mainPy.includes('def claude_code(')) return 'unpatched'
-  // the current patch relays Claude Code's follow-ups during the call
-  return mainPy.includes('async def _relay_claude_code_followups(') ? 'current' : 'old'
+  // the current patch passes the user's own transcribed words to Claude Code
+  return mainPy.includes('def _with_user_words(') ? 'current' : 'old'
 }
 
 export function seconds(ms: number): string {

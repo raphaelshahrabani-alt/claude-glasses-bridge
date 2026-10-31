@@ -81,7 +81,8 @@ export function createHandler(deps: { hub: Hub; channel: Channel; config: Config
 
   async function ask(text: string, opts: { image?: string; wait: boolean; signal?: AbortSignal }): Promise<AskResult> {
     if (config.permissionRelay) {
-      const verdict = parseVerdict(text)
+      // Only the first line: the voice worker appends the user's transcribed words below the request.
+      const verdict = parseVerdict(text.split('\n', 1)[0])
       // An unknown ID falls through as an ordinary message, so "yes, maybe" still reaches Claude.
       if (verdict && hub.hasOpenPermission(verdict.request_id)) {
         // The person who approved is still listening, so hold this request open

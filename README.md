@@ -58,7 +58,7 @@ bun run talk --events              # watch everything crossing the bridge
 
 ## Starting everything (VisionClaw)
 
-`bin/start-glasses [project-folder]` opens VisionClaw's gateway, its voice worker and a Claude Code session with the glasses channel, each in its own Terminal window, and skips any that are already running. Claude Code starts on Sonnet at low effort with auto permissions, because voice answers are only as fast as the model behind them; `GLASSES_MODEL`, `GLASSES_EFFORT` and `GLASSES_PERMISSION_MODE` override that. See [IPHONE.md](integrations/visionclaw/IPHONE.md#every-time-after-setup).
+`bin/start-glasses [project-folder] [more-folders...]` opens VisionClaw's gateway, its voice worker and a Claude Code session with the glasses channel, each in its own Terminal window, and skips any that are already running. Claude Code works in the first folder and gets access to the others with `--add-dir`. Without that, asking about another project stalls on a permission prompt nobody can see from the glasses. It also turns on voice approvals, so the prompts that do come up are read out on the glasses (`GLASSES_PERMISSION_RELAY=0` turns them off). Claude Code starts on Sonnet at low effort with auto permissions, because voice answers are only as fast as the model behind them; `GLASSES_MODEL`, `GLASSES_EFFORT` and `GLASSES_PERMISSION_MODE` override that. See [IPHONE.md](integrations/visionclaw/IPHONE.md#every-time-after-setup).
 
 The worker starts with `CLAUDE_CODE_ONLY=1`, which pairs VisionClaw's voice model with Claude Code. The voice model holds the conversation and answers what it is sure of right away: chat, general knowledge, and live web facts through quick_search. Anything about your code, files or computer, or anything it isn't sure of, goes to Claude Code.
 
@@ -75,6 +75,7 @@ The patch also keeps the glasses camera off during calls. When you ask about som
 A spoken answer goes through three steps. First the voice model hears you, which takes a second or so. Then Claude Code works on it; this is the step `glasses-doctor` times. Finally the voice model speaks the answer, which takes another second or two. Nearly all the variation is in the Claude Code step:
 
 - **Model and effort:** `start-glasses` uses Sonnet at low effort. `GLASSES_MODEL=haiku` is faster still. Opus is slower but better at hard coding work.
+- **First questions about a project:** Claude Code has to read around a project it doesn't know yet, which is slow. Run `/init` once in each project's own Claude Code session to give it a `CLAUDE.md` it reads up front.
 - **Context size:** a long-running session gets slower as its context grows. Type `/clear` in the Claude Code window when you switch topics.
 - **Permission prompts:** a prompt in the Claude Code window stops the answer until someone approves it. Use auto mode (the `start-glasses` default), add allow rules, or turn on `GLASSES_PERMISSION_RELAY` to approve by voice.
 - **Hooks and plugins:** anything that runs on every prompt or tool call, such as a memory plugin, adds its time to every answer. If the doctor's times are high, try with them turned off in `/plugin`.

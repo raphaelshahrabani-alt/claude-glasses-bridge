@@ -30,8 +30,8 @@ function setup(opts: { listening?: number[]; workerRunning?: boolean; withStartS
   return { root, visionclaw, project, log, bin }
 }
 
-function run(env: ReturnType<typeof setup>, extraEnv: Record<string, string> = {}) {
-  const proc = Bun.spawnSync(['bash', script, env.project], {
+function run(env: ReturnType<typeof setup>, extraEnv: Record<string, string> = {}, extraArgs: string[] = []) {
+  const proc = Bun.spawnSync(['bash', script, env.project, ...extraArgs], {
     env: { PATH: `${env.bin}:/usr/bin:/bin`, HOME: env.root, VISIONCLAW_DIR: env.visionclaw, ...extraEnv },
   })
   const windows = existsSync(env.log)
@@ -70,6 +70,20 @@ describe('start-glasses', () => {
     const { windows } = run(env, { GLASSES_MODEL: 'opus', GLASSES_EFFORT: 'high', GLASSES_PERMISSION_MODE: 'manual' })
     expect(windows).toHaveLength(1)
     expect(windows[0][1]).toEndWith('--model opus --effort high --permission-mode manual')
+  })
+
+  test('extra folders become --add-dir, and voice approvals are switched on', () => {
+    const env = setup({ listening: [8788], workerRunning: true })
+    mkdirSync(join(env.root, 'poker-tracker'))
+    mkdirSync(join(env.root, 'ugc automation'))
+    const { windows, out } = run(env, {}, [join(env.root, 'poker-tracker'), join(env.root, 'ugc automation')])
+    expect(windows[0][1]).toEndWith(
+      `--permission-mode auto --add-dir ${env.root}/poker-tracker --add-dir ${env.root}/ugc\\ automation`,
+    )
+    expect(out).toContain(`also has access to ${env.root}/ugc automation`)
+    expect(existsSync(join(env.root, '.claude-glasses-bridge', 'permission-relay'))).toBe(true)
+    run(env, { GLASSES_PERMISSION_RELAY: '0' })
+    expect(existsSync(join(env.root, '.claude-glasses-bridge', 'permission-relay'))).toBe(false)
   })
 
   test('stops with a pointer to the guide when the worker script is missing', () => {

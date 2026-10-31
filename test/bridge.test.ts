@@ -2,7 +2,7 @@
 // channel with an MCP client: receive <channel> events, call the reply tool,
 // send permission requests.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -304,6 +304,19 @@ describe('bridge with permission relay', () => {
     expect(await (await cc.get('/pending-notifications')).json()).toEqual({ notifications: ['Okay, I did not push.'] })
   })
 
+  test('a spoken verdict still counts with the user\'s transcribed words below it', async () => {
+    await cc.client.notification({
+      method: 'notifications/claude/channel/permission_request',
+      params: { request_id: 'vwxyz', tool_name: 'Read', description: 'Read a file in another folder', input_preview: '{}' },
+    } as any)
+    await Bun.sleep(50)
+    const text = 'yes v w x y z\n\nThe user\'s own words, from speech-to-text, most recent last:\n- yes v w x y z'
+    const verdict: any = await (await cc.post('/message', { text })).json()
+    expect(verdict).toEqual({ status: 'verdict', request_id: 'vwxyz', behavior: 'allow', reply: null })
+    expect((await cc.next('notifications/claude/channel/permission')).params).toEqual({ request_id: 'vwxyz', behavior: 'allow' })
+    await cc.get('/pending-notifications') // drop the queued prompt
+  })
+
   test('POST /permission answers a prompt directly', async () => {
     await cc.client.notification({
       method: 'notifications/claude/channel/permission_request',
@@ -329,6 +342,14 @@ describe('bridge without permission relay', () => {
     await cc.reply(note.params!.meta.chat_id, 'Yes to what?')
     expect(((await (await response).json()) as any).reply).toBe('Yes to what?')
     expect((await cc.post('/permission', { request_id: 'abcde', behavior: 'allow' })).status).toBe(409)
+  })
+
+  test('a permission-relay file in the data folder switches relay on', async () => {
+    const relay = new FakeClaudeCode(18795)
+    writeFileSync(join(relay.dataDir, 'permission-relay'), '')
+    await relay.start()
+    expect(((await (await fetch(`${relay.base}/health`)).json()) as any).permission_relay).toBe(true)
+    await relay.client.close()
   })
 
   test('--channels counts as a channel session too', async () => {

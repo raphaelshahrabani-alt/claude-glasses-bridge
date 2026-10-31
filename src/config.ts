@@ -59,7 +59,12 @@ export function loadConfig(env: Env = process.env): Config {
     // VisionClaw's voice worker gives up on a task call after 120s, so answer
     // a little before that and let the late reply go to /pending-notifications.
     waitMs: number(env.GLASSES_WAIT_S, 110, 'GLASSES_WAIT_S') * 1000,
-    permissionRelay: env.GLASSES_PERMISSION_RELAY === '1',
+    // On with GLASSES_PERMISSION_RELAY=1, or when start-glasses left a
+    // permission-relay file in the data folder (a file, because Claude Code
+    // may not pass its own environment through to MCP servers).
+    permissionRelay:
+      env.GLASSES_PERMISSION_RELAY === '1' ||
+      (env.GLASSES_PERMISSION_RELAY !== '0' && existsSync(join(dir, 'permission-relay'))),
     listen: env.GLASSES_LISTEN === 'always' ? 'always' : 'auto',
   }
 }

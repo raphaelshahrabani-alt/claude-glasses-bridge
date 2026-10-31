@@ -55,6 +55,8 @@ if (health === null) {
   bad('the bridge is up but Claude Code has not finished connecting to it', 'check the Claude Code window, or restart it with start-glasses')
 } else {
   ok(`Claude Code is connected to the bridge at ${base}`)
+  if (health.permission_relay) ok('permission prompts are read out on the glasses, to approve by voice')
+  else info('(voice approvals are off: a permission prompt waits on the Mac until someone answers it there)')
 }
 
 if ((await getJson(`${gatewayUrl}/health`)) === null) {
