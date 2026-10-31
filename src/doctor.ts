@@ -52,7 +52,8 @@ export type PatchState = 'missing' | 'unpatched' | 'old' | 'current'
 export function patchState(mainPy: string | null): PatchState {
   if (mainPy === null) return 'missing'
   if (!mainPy.includes('def claude_code(')) return 'unpatched'
-  return mainPy.includes('CLAUDE_CODE_VOICE_INSTRUCTIONS') ? 'current' : 'old'
+  // the current patch wakes the glasses camera on demand
+  return mainPy.includes('async def _look(') ? 'current' : 'old'
 }
 
 export function seconds(ms: number): string {

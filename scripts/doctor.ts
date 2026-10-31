@@ -86,7 +86,7 @@ if (!workerPid) {
 
 const mainPy = join(visionclaw, 'agent', 'main.py')
 const patch = patchState(existsSync(mainPy) ? readFileSync(mainPy, 'utf8') : null)
-const applyPatch = `cd ${visionclaw} && git checkout agent/main.py && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch, then restart the worker`
+const applyPatch = `cd ${visionclaw} && git checkout agent/main.py samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch, then restart the worker and rebuild the iPhone app`
 if (patch === 'current') ok('VisionClaw has the current Claude Code patch')
 else if (patch === 'old') bad('VisionClaw has an older version of the Claude Code patch', applyPatch)
 else if (patch === 'unpatched') bad('VisionClaw is not patched to talk to Claude Code', applyPatch)

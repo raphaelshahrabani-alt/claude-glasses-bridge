@@ -1,8 +1,8 @@
 diff --git a/agent/main.py b/agent/main.py
-index 5d3659e..a9f3b02 100644
+index 5d3659e..03c7e4a 100644
 --- a/agent/main.py
 +++ b/agent/main.py
-@@ -365,6 +365,59 @@ BROWSE_KEEPALIVE_S = 90
+@@ -365,6 +365,60 @@ BROWSE_KEEPALIVE_S = 90
  # instruction blob for a voice model, not an answer, so never relay it as one.
  GATEWAY_DEFERRAL_PREFIX = "[task started]"
  
@@ -32,7 +32,7 @@ index 5d3659e..a9f3b02 100644
 +
 +CLAUDE_CODE_VOICE_INSTRUCTIONS = """You are the voice of Claude Code, an AI coding agent running on the user's own
 +computer with their projects open. The user talks to you through Meta smart glasses or their
-+phone, and you can see what their camera sees.
++phone. The camera is off unless a request needs it.
 +
 +Claude Code is the one that knows things and does things; you are how the user hears it. For
 +anything that needs knowledge, reasoning or action, call claude_code: questions about their
@@ -41,13 +41,14 @@ index 5d3659e..a9f3b02 100644
 +complete, together with anything from earlier in the call that it depends on. Do not answer
 +those yourself and never guess: Claude Code knows the user's projects and you do not.
 +
-+Answer on your own only for greetings and small talk, for repeating or clarifying what Claude
-+Code just said, and for simple questions about what is in front of the user. For current facts
-+from the web (weather, news, scores, opening hours) use quick_search: it answers in a couple of
-+seconds.
++Answer on your own only for greetings and small talk, and for repeating or clarifying what
++Claude Code just said. For current facts from the web (weather, news, scores, opening hours)
++use quick_search: it answers in a couple of seconds.
 +
-+When a request is about something on camera (a screen, an error message, code, a whiteboard, a
-+document), call claude_code with attach_view=true so Claude Code reads the current frame.
++When the user asks you to look at something, or a request is about something in front of them
++(a screen, an error message, code, a whiteboard, a document, an object), call claude_code with
++attach_view=true. That turns the camera on just long enough to take a picture for Claude Code.
++Do not describe the scene yourself.
 +
 +Before calling claude_code, say two or three words such as "Asking Claude" so the user knows
 +you heard them. Its answer can take ten seconds or more and may arrive as a follow-up. Relay it
@@ -62,7 +63,7 @@ index 5d3659e..a9f3b02 100644
  _relay_tasks: set[asyncio.Task] = set()
  
  
-@@ -456,6 +509,47 @@ async def _drain_pending(user_id: str) -> list[str]:
+@@ -456,6 +510,47 @@ async def _drain_pending(user_id: str) -> list[str]:
          return []
  
  
@@ -110,22 +111,61 @@ index 5d3659e..a9f3b02 100644
  def _card_text(raw: str, limit: int) -> str:
      """Markdown-ish search prose -> plain card text."""
      text = re.sub(r"[*_`#]+", "", raw)
-@@ -845,6 +939,27 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
+@@ -845,6 +940,66 @@ async def execute(ctx: RunContext[Userdata], task: str, attach_view: bool = Fals
      return await _run_delegated(ctx, task, "execute", job)
  
  
++# Camera on demand: a voice-only glasses call publishes no video until the
++# assistant needs to look. The worker then asks the phone to wake the glasses
++# camera (the "vc.camera" text-stream topic), takes one settled frame, and turns
++# the camera off again, so the capture light is on for seconds instead of the
++# whole call. A call that streams video all along never reaches the wake path.
++CAMERA_WAKE_S = 12
++CAMERA_SETTLE_S = 0.8
++
++
++async def _camera_command(room: rtc.Room, on: bool) -> None:
++    try:
++        await room.local_participant.send_text("on" if on else "off", topic="vc.camera")
++    except Exception:
++        logger.exception("camera %s request failed", "on" if on else "off")
++
++
++async def _look(ctx: RunContext[Userdata]) -> str | None:
++    """The current camera frame as base64 JPEG, waking the camera for it when
++    no frame is flowing."""
++    holder = ctx.userdata.frames
++    room = ctx.userdata.room
++    if room is None or (holder.frame is not None and time.time() - holder.arrived_at < 2):
++        return encode_latest_frame(holder)
++    asked_at = time.time()
++    await _camera_command(room, True)
++    try:
++        deadline = time.monotonic() + CAMERA_WAKE_S
++        while time.monotonic() < deadline:
++            if holder.frame is not None and holder.arrived_at > asked_at:
++                # The first frames after waking are often dark while exposure settles.
++                await asyncio.sleep(CAMERA_SETTLE_S)
++                return encode_latest_frame(holder)
++            await asyncio.sleep(0.2)
++        logger.warning("camera did not wake within %ss", CAMERA_WAKE_S)
++        return None
++    finally:
++        await _camera_command(room, False)
++
++
 +@function_tool
 +async def claude_code(ctx: RunContext[Userdata], task: str, attach_view: bool = False) -> str:
 +    """Claude Code, running on the user's own computer with their projects open: answers
 +    questions, explains things, reads and edits files and code, runs commands and tests, uses
 +    git, and uses any tools the user connected to it. Pass the request in the user's own words,
-+    complete, with any earlier context it depends on. Set attach_view=true when the request
-+    concerns something the user is showing on camera (a screen, an error message, code, a
-+    whiteboard, a document): the current camera frame is then attached so Claude Code can
-+    read it."""
++    complete, with any earlier context it depends on. Set attach_view=true when the user asks
++    you to look, or the request concerns something in front of them (a screen, an error
++    message, code, a whiteboard, a document): a picture from the camera is then attached,
++    waking the camera for it if it is off, so Claude Code can read it."""
 +    mode = os.environ.get("ATTACH_VIEW_MODE", "auto")
 +    should_attach = attach_view if mode == "auto" else (mode == "always")
-+    image_b64 = encode_latest_frame(ctx.userdata.frames) if should_attach else None
++    image_b64 = await _look(ctx) if should_attach else None
 +    logger.info(
 +        "claude_code start: user=%s attach_view=%s image_kb=%d task=%r",
 +        ctx.userdata.user_id, attach_view, len(image_b64 or "") * 3 // 4096, task[:200],
@@ -138,7 +178,7 @@ index 5d3659e..a9f3b02 100644
  @function_tool
  async def browse(ctx: RunContext[Userdata], task: str) -> str:
      """The computer-use / shopping / browser agent: drives a real web browser on a live
-@@ -1245,8 +1360,13 @@ async def entrypoint(ctx: JobContext):
+@@ -1245,8 +1400,13 @@ async def entrypoint(ctx: JobContext):
  
      await session.start(
          agent=Agent(
@@ -154,7 +194,7 @@ index 5d3659e..a9f3b02 100644
          ),
          room=ctx.room,
          # Video is opt-in (RoomInputOptions.video_enabled defaults to False);
-@@ -1259,7 +1379,10 @@ async def entrypoint(ctx: JobContext):
+@@ -1259,7 +1419,10 @@ async def entrypoint(ctx: JobContext):
      # gateway; deliver them up front so a hangup never discards an answer.
      # Dead app connections ride the same opening beat: one brief mention,
      # then silence -- the fix lives in Settings -> Connected Apps.
@@ -166,3 +206,212 @@ index 5d3659e..a9f3b02 100644
      reconnect_note = ""
      if stale_apps:
          logger.info("apps need reconnect: user=%s apps=%s", user_id, stale_apps)
+diff --git a/samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift b/samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift
+index 65f9b24..f836197 100644
+--- a/samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift
++++ b/samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift
+@@ -233,10 +233,10 @@ final class LiveKitSession: NSObject, ObservableObject {
+     if SettingsManager.shared.captureSource == .glasses {
+       // Glasses preview is a buffer track fed by pushGlassesFrame; there is
+       // no capture device to open.
+-      track = LocalVideoTrack.createBufferTrack(name: "glasses-preview", source: .camera)
++      track = await LocalVideoTrack.createBufferTrack(name: "glasses-preview", source: .camera)
+       glassesCapturerBox.capturer = track.capturer as? BufferCapturer
+     } else {
+-      track = LocalVideoTrack.createCameraTrack(
++      track = await LocalVideoTrack.createCameraTrack(
+         options: CameraCaptureOptions(position: .back))
+       glassesCapturerBox.capturer = nil
+     }
+@@ -382,7 +382,7 @@ final class LiveKitSession: NSObject, ObservableObject {
+           // camera source keeps mute/freeze/agent logic identical.
+           // reportStatistics enables the per-second outbound-rtp stats poll so
+           // we can log the actual encoded resolution/fps leaving the phone.
+-          let track = LocalVideoTrack.createBufferTrack(name: "glasses", source: .camera, reportStatistics: true)
++          let track = await LocalVideoTrack.createBufferTrack(name: "glasses", source: .camera, reportStatistics: true)
+           // New track, new frame clock: the deferred publish must wait for a
+           // frame on THIS track. A sawFrame left true by the preview track
+           // otherwise published this still-empty call track at once, so the
+@@ -418,11 +418,13 @@ final class LiveKitSession: NSObject, ObservableObject {
+       }
+       registerCaptionHandler()
+       registerCardHandler()
++      registerCameraHandler()
+       state = .connected
+       resetZoom()
+       refreshAgentStatus()
+       if usingGlassesSource {
+-        videoEstablishing = true
++        // A camera-on-demand call has no video to wait for.
++        videoEstablishing = !SettingsManager.shared.glassesCameraOnDemand
+         callConnectedAt = CFAbsoluteTimeGetCurrent()
+         startGlassesFrameMonitor()
+       }
+@@ -524,6 +526,12 @@ final class LiveKitSession: NSObject, ObservableObject {
+   /// for a room that dropped under us rather than one the user left, so the
+   /// screen, announcements and cues report a lost connection, not a hang-up.
+   func stop(failure: String? = nil) async {
++    // A look in progress must not outlive the call.
++    if cameraOffTask != nil {
++      cameraOffTask?.cancel()
++      cameraOffTask = nil
++      onCameraRequest?(false)
++    }
+     isStopping = true
+     defer { isStopping = false }
+     // Invalidate any start() still waiting on the network so it cannot publish
+@@ -580,6 +588,41 @@ final class LiveKitSession: NSObject, ObservableObject {
+     }
+   }
+ 
++  /// Set by StreamSessionView, which owns the glasses stream: called with true
++  /// when the agent wants to look through the glasses, false when it is done.
++  var onCameraRequest: ((Bool) -> Void)?
++  private var cameraOffTask: Task<Void, Never>?
++
++  /// Glasses camera on demand: the agent sends "on" on the "vc.camera" topic
++  /// when it needs a picture and "off" once it has one.
++  private func registerCameraHandler() {
++    Task { [weak self] in
++      guard let room = self?.room else { return }
++      try? await room.registerTextStreamHandler(for: "vc.camera") { [weak self] reader, _ in
++        let command = try await reader.readAll()
++        await self?.handleCameraCommand(command)
++      }
++    }
++  }
++
++  private func handleCameraCommand(_ command: String) {
++    let on = command.trimmingCharacters(in: .whitespacesAndNewlines) == "on"
++    NSLog("[LiveKit] agent asked to turn the glasses camera %@", on ? "on" : "off")
++    cameraOffTask?.cancel()
++    cameraOffTask = nil
++    if on {
++      // If the "off" never arrives (the worker restarted, the network dropped),
++      // turn the camera off anyway rather than leave the light on.
++      cameraOffTask = Task { [weak self] in
++        try? await Task.sleep(nanoseconds: 20_000_000_000)
++        guard !Task.isCancelled else { return }
++        self?.cameraOffTask = nil
++        self?.onCameraRequest?(false)
++      }
++    }
++    onCameraRequest?(on)
++  }
++
+   private func handleCardJSON(_ json: String) {
+     guard let data = json.data(using: .utf8),
+           let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+diff --git a/samples/CameraAccess/CameraAccess/Settings/SettingsManager.swift b/samples/CameraAccess/CameraAccess/Settings/SettingsManager.swift
+index 88fcdc4..cc5dd81 100644
+--- a/samples/CameraAccess/CameraAccess/Settings/SettingsManager.swift
++++ b/samples/CameraAccess/CameraAccess/Settings/SettingsManager.swift
+@@ -146,6 +146,17 @@ final class SettingsManager {
+     set { defaults.set(newValue, forKey: Self.showCaptionsKey) }
+   }
+ 
++  /// Glasses camera on demand: a glasses call is voice-only, and the agent
++  /// wakes the camera only to take a look when the user asks (the "vc.camera"
++  /// topic in LiveKitSession), so the capture light is not on all call long.
++  /// On by default; false streams the glasses camera for the whole call.
++  static let glassesCameraOnDemandKey = "glassesCameraOnDemand"
++
++  var glassesCameraOnDemand: Bool {
++    get { defaults.object(forKey: Self.glassesCameraOnDemandKey) as? Bool ?? true }
++    set { defaults.set(newValue, forKey: Self.glassesCameraOnDemandKey) }
++  }
++
+   /// Cloud by default: the hosted gateway needs nothing installed and keeps
+   /// working with the phone away from home, which self-hosting cannot do.
+   var agentBackend: AgentBackend {
+diff --git a/samples/CameraAccess/CameraAccess/Views/StreamSessionView.swift b/samples/CameraAccess/CameraAccess/Views/StreamSessionView.swift
+index d0e541e..1d48804 100644
+--- a/samples/CameraAccess/CameraAccess/Views/StreamSessionView.swift
++++ b/samples/CameraAccess/CameraAccess/Views/StreamSessionView.swift
+@@ -33,7 +33,18 @@ struct StreamSessionView: View {
+     CaptureSource(rawValue: captureSourceRaw) ?? .iPhoneCamera
+   }
+ 
++  /// Glasses camera on demand (SettingsManager.glassesCameraOnDemand): the
++  /// glasses call is voice-only and does not ride the DAT stream's lifecycle;
++  /// the agent wakes the camera through LiveKitSession.onCameraRequest when it
++  /// needs to look. iOS only so far (see the Claude Code patch notes).
++  private var cameraOnDemand: Bool {
++    captureSource == .glasses && SettingsManager.shared.glassesCameraOnDemand
++  }
++
+   private var glassesPlaceholder: (title: String, caption: String) {
++    if cameraOnDemand, viewModel.glassesIssue == nil {
++      return ("Voice only", "The glasses camera turns on only when you ask it to look.")
++    }
+     switch viewModel.glassesIssue {
+     case .sdkUnavailable:
+       return ("Glasses unavailable", "The glasses SDK is not available on this device.")
+@@ -59,7 +70,7 @@ struct StreamSessionView: View {
+     ZStack {
+       if captureSource == .iPhoneCamera {
+         LiveKitStreamView(session: liveKit)
+-      } else if viewModel.isStreaming {
++      } else if viewModel.isStreaming, !cameraOnDemand {
+         // Glasses are just another camera: same call screen, same agent, with
+         // DAT frames bridged into the room via pushGlassesFrame.
+         LiveKitStreamView(session: liveKit, glassesPlaceholder: glassesPlaceholder)
+@@ -71,6 +82,11 @@ struct StreamSessionView: View {
+           // the placeholder is the only voice for the wait.
+           LiveKitStreamView(session: liveKit, glassesPlaceholder: glassesPlaceholder)
+             .task {
++              if cameraOnDemand {
++                // Voice-only call; the camera wakes only when the agent asks to look.
++                if !liveKit.isActive { await liveKit.start() }
++                return
++              }
+               guard !glassesAutoStarted else { return }
+               glassesAutoStarted = true
+               NSLog("[Stream] auto-start begin (waiting on glasses wake + BT handshake)")
+@@ -96,6 +112,18 @@ struct StreamSessionView: View {
+       viewModel.onDecodedFrame = { [weak liveKit] pixelBuffer in
+         liveKit?.pushGlassesFrame(pixelBuffer)
+       }
++      // No cycle: liveKit's handler holds the view model, whose frame
++      // callback holds liveKit only weakly.
++      let glasses = viewModel
++      liveKit.onCameraRequest = { on in
++        Task { @MainActor in
++          if on {
++            await glasses.handleStartStreaming()
++          } else {
++            await glasses.stopSession()
++          }
++        }
++      }
+       if captureSource == .iPhoneCamera {
+         await liveKit.start()
+       }
+@@ -107,7 +135,7 @@ struct StreamSessionView: View {
+       // transient .waiting (glasses briefly asleep) keeps the call alive; only
+       // a real .stopped ends it. Gating on isStreaming (which is true during
+       // .waiting) opened the room before any frame and made the publish race.
+-      guard captureSource == .glasses else { return }
++      guard captureSource == .glasses, !cameraOnDemand else { return }
+       Task {
+         if status == .streaming {
+           await liveKit.start()
+@@ -143,7 +171,7 @@ struct StreamSessionView: View {
+     .onReceive(CallCommands.shared.startRequests) { _ in
+       Task {
+         guard !liveKit.isActive else { return }
+-        if captureSource == .glasses, !viewModel.isStreaming {
++        if captureSource == .glasses, !cameraOnDemand, !viewModel.isStreaming {
+           await viewModel.handleStartStreaming()
+         } else {
+           await liveKit.start()
+@@ -163,6 +191,9 @@ struct StreamSessionView: View {
+           await liveKit.start()
+         } else {
+           await liveKit.stop()
++          // Camera on demand: the glasses call is voice-only, so it starts
++          // without waiting for video.
++          if SettingsManager.shared.glassesCameraOnDemand { await liveKit.start() }
+         }
+       }
+     }

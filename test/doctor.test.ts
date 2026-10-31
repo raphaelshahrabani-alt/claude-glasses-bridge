@@ -34,7 +34,8 @@ describe('helpers', () => {
     expect(patchState(null)).toBe('missing')
     expect(patchState('async def execute(')).toBe('unpatched')
     expect(patchState('async def claude_code(ctx')).toBe('old')
-    expect(patchState('CLAUDE_CODE_VOICE_INSTRUCTIONS = ...\nasync def claude_code(ctx')).toBe('current')
+    expect(patchState('CLAUDE_CODE_VOICE_INSTRUCTIONS = ...\nasync def claude_code(ctx')).toBe('old')
+    expect(patchState('async def _look(ctx): ...\nasync def claude_code(ctx')).toBe('current')
   })
 
   test('median and verdict', () => {
@@ -65,7 +66,7 @@ describe('glasses-doctor end to end', () => {
 
   beforeAll(async () => {
     mkdirSync(join(visionclaw, 'agent'), { recursive: true })
-    writeFileSync(join(visionclaw, 'agent', 'main.py'), 'CLAUDE_CODE_VOICE_INSTRUCTIONS = ""\nasync def claude_code(ctx): ...\n')
+    writeFileSync(join(visionclaw, 'agent', 'main.py'), 'async def _look(ctx): ...\nasync def claude_code(ctx): ...\n')
     gateway = Bun.serve({ port: 18797, hostname: '127.0.0.1', fetch: () => Response.json({ ok: true }) })
     // something pgrep -f "main.py start" will find
     worker = Bun.spawn(['bash', '-c', 'exec -a "python main.py start" sleep 30'])

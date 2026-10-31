@@ -169,10 +169,7 @@ Wait for a line containing `registered worker`. If you also deployed VisionClaw'
    ```
    The `xcodebuild` output should list `client-sdk-swift` at **2.18.0** and `webrtc-xcframework` at **150.x**.
 
-   Xcode 26.3's Swift compiler then still reports "Expression is 'async' but is not marked with 'await'" on three `LocalVideoTrack.create…` calls in `LiveKitSession.swift` (lines 236, 239 and 385). All three are inside `async` functions, so adding `await` is enough:
-   ```bash
-   sed -i '' -E 's/= LocalVideoTrack\.create(BufferTrack|CameraTrack)\(/= await LocalVideoTrack.create\1(/' CameraAccess/OpenClaw/LiveKitSession.swift
-   ```
+   Xcode 26.3's Swift compiler also rejects three `LocalVideoTrack.create…` calls in `LiveKitSession.swift` with "Expression is 'async' but is not marked with 'await'". The Claude Code patch from step 2 already adds the missing `await`s.
 
 6. **Run the app.** Pick your iPhone as the run destination at the top of Xcode and press **⌘R**.
    - The first time, iOS blocks the app until you trust it: **Settings → General → VPN & Device Management** → your Apple ID → **Trust**. Then press ⌘R again.
@@ -226,8 +223,10 @@ In the Claude Code window, choose "I am using this for local development". Then 
 
 To check everything, run `~/claude-glasses-bridge/bin/glasses-doctor`. It marks each piece ✓ or ✗ with the fix, and times two live questions to Claude Code.
 
-**Updating from an earlier version of the patch:** reset the worker file and apply the new patch, then restart the worker:
+**The glasses camera is off by default.** Glasses calls are voice only. When you ask about something in front of you ("look at this", "what's on my screen?"), the worker turns the glasses camera on, takes one picture for Claude Code, and turns it off again, so the capture light comes on for a few seconds instead of the whole call. To stream the camera for the whole call as VisionClaw normally does, set `glassesCameraOnDemand` to false in `SettingsManager.swift`.
+
+**Updating from an earlier version of the patch:** reset the files it changes, apply the new patch, restart the worker, and rebuild the iPhone app in Xcode (Product → Run):
 
 ```bash
-cd ~/VisionClaw && git checkout agent/main.py && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch
+cd ~/VisionClaw && git checkout agent/main.py samples/CameraAccess/CameraAccess/OpenClaw/LiveKitSession.swift && git apply ~/claude-glasses-bridge/integrations/visionclaw/claude-code.patch
 ```

@@ -2,7 +2,12 @@
 
 [VisionClaw](https://github.com/sseanliu/VisionClaw) already handles the hard parts: the Meta glasses link, live voice, and camera frames. `claude-code.patch` adds one tool to its voice worker, `claude_code`, which hands tasks to your Claude Code session through this bridge. VisionClaw's own tools (`execute`, `browse`, notes and so on) keep working. The voice model chooses `claude_code` when you mention Claude, your computer, your code, or files on your machine.
 
-The patch is written against VisionClaw commit `3f39807` (October 2026) and only touches `agent/main.py`.
+The patch is written against VisionClaw commit `3f39807` (October 2026). It changes the voice worker (`agent/main.py`) and three files of the iPhone app:
+
+- **`LiveKitSession.swift`:** the missing `await`s that Xcode 26.3 requires, plus the glasses camera on demand.
+- **`StreamSessionView.swift`** and **`SettingsManager.swift`:** the rest of the glasses camera on demand.
+
+With the camera on demand, glasses calls are voice only, and the worker wakes the glasses camera just long enough to take a picture when you ask it to look. The iPhone changes are iOS only: VisionClaw's own rule is to mirror app changes in its Android client, but this setup was built and tested with an iPhone, so the Android app is unchanged.
 
 ## How VisionClaw is wired today
 

@@ -62,6 +62,8 @@ bun run talk --events              # watch everything crossing the bridge
 
 The worker starts with `CLAUDE_CODE_ONLY=1`, which turns VisionClaw's voice model into a thin voice for Claude Code. Its own instructions and tools are replaced by just `claude_code` and `quick_search`. Anything that needs knowledge or action goes to Claude Code. The voice model answers on its own only for small talk and simple questions about what's on camera. Live web facts like weather or news go to quick_search, which takes about two seconds. Without this mode the voice model answered most questions itself, knowing nothing about your projects.
 
+The patch also keeps the glasses camera off during calls. When you ask about something in front of you, the worker turns it on for one picture and sends that to Claude Code, so the capture light doesn't stay on (iPhone app only).
+
 ## Checking the setup
 
 `bin/glasses-doctor` checks each piece: the Claude Code session and bridge, VisionClaw's gateway, the voice worker and its mode, and the VisionClaw patch version. Anything wrong gets a ✗ and the fix. It then lists your recent questions with how long Claude Code took for each. Finally it sends two live test questions through the bridge and times them: a plain one, and one that runs `git status` in the project, to show Claude Code can work in your code. `--quick` skips the live questions.
