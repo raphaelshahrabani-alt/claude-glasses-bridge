@@ -1,0 +1,514 @@
+"""The PC (Windows) side: settings files, keys, the launcher, the doctor, setup and the glasses command.
+
+Everything runs here with stand-ins for Windows programs (winget, npm, tailscale); the Windows-only
+calls are small and are covered by checking the commands they would run.
+Run: python -m unittest discover -s voice/tests
+"""
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+
+import envfile  # noqa: E402
+import glasses_cli  # noqa: E402
+import keys  # noqa: E402
+import launcher as launcher_mod  # noqa: E402
+import pcdoctor  # noqa: E402
+import setup_pc  # noqa: E402
+from launcher import Launcher, missing_setup, venv_python, worker_env  # noqa: E402
+
+
+def make_install(root: Path, livekit=True, node_modules=True, venv=True):
+    """A data folder and a VisionClaw folder that look set up."""
+    data, vc = root / "data", root / "VisionClaw"
+    (vc / "gateway").mkdir(parents=True)
+    if node_modules:
+        (vc / "gateway" / "node_modules").mkdir()
+    if livekit:
+        (vc / "gateway" / ".env").write_text("PORT=8788\nLIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY=key1\n"
+                                              "LIVEKIT_API_SECRET=secret1\nGATEWAY_TOKENS=abc123:me\n")
+    if venv:
+        py = venv_python(data)
+        py.parent.mkdir(parents=True)
+        py.write_text("")
+    data.mkdir(exist_ok=True)
+    return data, vc
+
+
+class EnvFileTest(unittest.TestCase):
+    def test_parse(self):
+        text = "# comment\nA=1\nexport B='two words'\nC=\"3\"\n\nbad line\n1X=nope\nD = spaced \nE=a=b\n"
+        self.assertEqual(envfile.parse(text), {"A": "1", "B": "two words", "C": "3", "D": "spaced", "E": "a=b"})
+
+    def test_set_value_keeps_other_lines_and_replaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "voice.env"
+            path.write_text("A=1\nexport KEY=old\n# note\n")
+            envfile.set_value(path, "KEY", "new")
+            self.assertEqual(path.read_text(), "A=1\n# note\nKEY=new\n")
+            envfile.set_value(Path(tmp) / "sub" / "fresh.env", "X", "y")
+            self.assertEqual((Path(tmp) / "sub" / "fresh.env").read_text(), "X=y\n")
+
+
+class KeysTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.out = io.StringIO()
+        self.err = io.StringIO()
+        self.real = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = self.out, self.err
+
+    def tearDown(self):
+        sys.stdout, sys.stderr = self.real
+        self.tmp.cleanup()
+
+    def save(self, name, value, **checks):
+        return keys.save(name, ask=lambda prompt: value, data_dir=self.dir, **checks)
+
+    def env(self):
+        return (self.dir / "voice.env").read_text() if (self.dir / "voice.env").exists() else None
+
+    def test_a_good_elevenlabs_key_is_kept(self):
+        (self.dir / "voice.env").write_text("GLASSES_WORK_EFFORT=high\n")
+        code = self.save("ELEVEN_API_KEY", "  sk_new 5678 \n", check_eleven=lambda k: {"ok": True})
+        self.assertEqual(code, 0)
+        self.assertEqual(self.env(), "GLASSES_WORK_EFFORT=high\nELEVEN_API_KEY=sk_new5678\n")
+        self.assertIn("ElevenLabs accepts this key", self.out.getvalue())
+        self.assertNotIn("sk_new5678", self.out.getvalue())  # only the last four are shown
+
+    def test_an_invalid_key_is_not_kept_and_the_old_one_stays(self):
+        (self.dir / "voice.env").write_text("ELEVEN_API_KEY=old_key\n")
+        code = self.save("ELEVEN_API_KEY", "typo", check_eleven=lambda k: {"ok": False, "status": "invalid_api_key"})
+        self.assertEqual(code, 1)
+        self.assertEqual(self.env(), "ELEVEN_API_KEY=old_key\n")
+        self.assertIn("did not keep it", self.err.getvalue())
+
+    def test_an_invalid_key_with_no_earlier_file_leaves_no_file(self):
+        code = self.save("DEEPGRAM_API_KEY", "typo", check_deepgram=lambda k: {"ok": False, "status": "invalid_api_key"})
+        self.assertEqual(code, 1)
+        self.assertIsNone(self.env())
+        self.assertIn("console.deepgram.com", self.err.getvalue())
+
+    def test_an_account_problem_keeps_the_key_and_says_it(self):
+        code = self.save("ELEVEN_API_KEY", "k1", check_eleven=lambda k: {
+            "ok": False, "status": "quota_exceeded", "problem": "the ElevenLabs account is out of credits", "fix": "upgrade"})
+        self.assertEqual(code, 0)
+        self.assertEqual(self.env(), "ELEVEN_API_KEY=k1\n")
+        self.assertIn("The key itself is fine, but: the ElevenLabs account is out of credits", self.err.getvalue())
+
+    def test_no_internet_keeps_the_key_without_claiming_it_works(self):
+        code = self.save("DEEPGRAM_API_KEY", "k1", check_deepgram=lambda k: {"ok": False, "status": "network", "problem": "offline"})
+        self.assertEqual(code, 0)
+        self.assertIn("Couldn't check it with Deepgram", self.out.getvalue())
+        self.assertNotIn("itself is fine", self.err.getvalue())
+
+    def test_other_keys_and_empty_pastes(self):
+        self.assertEqual(self.save("GLASSES_THING", "v"), 0)
+        self.assertEqual(self.env(), "GLASSES_THING=v\n")
+        self.assertEqual(self.save("ELEVEN_API_KEY", "   "), 1)
+        self.assertEqual(self.save("bad name", "v"), 1)
+
+
+class LauncherTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.said = []
+        self.started = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def launcher(self, **kw):
+        data, vc = make_install(self.root, **kw)
+        gateway_up = {"up": False}
+        self.gateway_up = gateway_up
+
+        def spawn(cmd, cwd, env, log):
+            self.started.append((cmd, Path(cwd), dict(env), log))
+            if cmd[-2:] == ["worker.py", "start"] or cmd[-1] == "start" and "worker.py" in cmd[-2]:
+                log.parent.mkdir(parents=True, exist_ok=True)
+                with open(log, "ab") as f:
+                    f.write(b'{"message": "registered worker"}\n')
+            else:
+                gateway_up["up"] = True
+            return os.getpid()  # a pid that is certainly alive
+
+        return Launcher(data_dir=data, visionclaw=vc, root=HERE.parent.parent, base_env={"PATH": "x", "KEEP": "env"},
+                        say=self.said.append, spawn=spawn, port_open=lambda p: gateway_up["up"], sleep=lambda s: None)
+
+    def test_worker_env(self):
+        data, vc = make_install(self.root)
+        (data / "voice.env").write_text("ELEVEN_API_KEY=ek\nGLASSES_WORK_EFFORT=low\n")
+        env = worker_env(data, vc, {"GLASSES_WORK_EFFORT": "high", "PATH": "p"}, "C:/proj", ["C:/a", "C:/b"])
+        self.assertEqual(env["ELEVEN_API_KEY"], "ek")
+        self.assertEqual(env["GLASSES_WORK_EFFORT"], "high")  # what's already set wins
+        self.assertEqual((env["LIVEKIT_URL"], env["LIVEKIT_API_KEY"], env["LIVEKIT_API_SECRET"]),
+                         ("wss://x.livekit.cloud", "key1", "secret1"))
+        self.assertEqual(env["GLASSES_PROJECT"], "C:/proj")
+        self.assertEqual(env["GLASSES_ADD_DIRS"], os.pathsep.join(["C:/a", "C:/b"]))
+        self.assertEqual((env["PYTHONUTF8"], env["GLASSES_DATA_DIR"]), ("1", str(data)))
+        self.assertNotIn("GATEWAY_TOKENS", env)  # the access code stays in the login service
+
+    def test_missing_setup_says_what_is_missing(self):
+        data, vc = make_install(self.root, livekit=False, node_modules=False, venv=False)
+        problems = " | ".join(missing_setup(data, vc))
+        for part in ("isn't installed yet", "login service isn't installed", "missing LIVEKIT_URL"):
+            self.assertIn(part, problems)
+        self.assertEqual(missing_setup(*make_install(self.root / "ok")), [])
+
+    def test_start_runs_the_login_service_then_the_voice(self):
+        launcher = self.launcher()
+        self.assertEqual(launcher.start("C:/proj", ["C:/extra"]), 0)
+        gateway, voice = self.started
+        self.assertEqual(gateway[0][-1], "start")
+        self.assertEqual(gateway[1], launcher.visionclaw / "gateway")
+        self.assertEqual(voice[0][0], str(venv_python(launcher.data_dir)))
+        self.assertTrue(voice[0][1].endswith("worker.py"))
+        self.assertEqual(voice[2]["GLASSES_PROJECT"], "C:/proj")
+        self.assertEqual(voice[2]["KEEP"], "env")
+        self.assertIn("Ready.", self.said[-1])
+        # and what it did is remembered for next time
+        self.assertEqual(json.loads((launcher.data_dir / "launch.json").read_text()), {"project": "C:/proj", "extra_dirs": ["C:/extra"]})
+
+    def test_start_again_leaves_running_things_alone_and_reuses_the_folders(self):
+        launcher = self.launcher()
+        launcher.start("C:/proj", ["C:/extra"])
+        self.started.clear()
+        self.assertEqual(launcher.start(), 0)
+        self.assertEqual(self.started, [])
+        self.assertIn("login service: already running", self.said)
+        self.assertIn("voice: already running", self.said)
+
+    def test_a_dead_voice_program_is_restarted(self):
+        launcher = self.launcher()
+        launcher.start("C:/proj")
+        launcher.pid_file("voice").write_text(json.dumps({"pid": 2 ** 22 + 12345, "started": 0}))  # not running
+        self.started.clear()
+        self.assertEqual(launcher.start(), 0)
+        self.assertEqual(len(self.started), 1)
+        self.assertEqual(self.started[0][3], launcher.log("voice"))
+        self.assertEqual(self.started[0][2]["GLASSES_PROJECT"], "C:/proj")  # the folder it had before
+
+    def test_start_says_when_setup_is_missing_or_the_voice_never_comes_up(self):
+        data, vc = make_install(self.root / "none", livekit=False)
+        launcher = Launcher(data_dir=data, visionclaw=vc, say=self.said.append)
+        self.assertEqual(launcher.start(), 1)
+        self.assertIn("  Run: glasses setup", self.said)
+        # the voice program starts but never says it registered
+        launcher = self.launcher()
+        launcher.spawn = lambda cmd, cwd, env, log: os.getpid()
+        launcher.port_open = lambda p: True
+        self.said.clear()
+        self.assertEqual(launcher.start("C:/proj", wait_s=0.2), 1)
+        self.assertTrue(any("didn't finish starting" in s for s in self.said))
+
+    def test_quiet_start_says_nothing_when_all_is_well(self):
+        launcher = self.launcher()
+        self.assertEqual(launcher.start("C:/proj", quiet=True), 0)
+        self.assertEqual(self.said, [])
+
+    def test_stop_ends_what_was_started(self):
+        data, vc = make_install(self.root)
+        launcher = Launcher(data_dir=data, visionclaw=vc, say=self.said.append, port_open=lambda p: False)
+        pid = launcher_mod.spawn([sys.executable, "-c", "import time; time.sleep(60)"], self.root, os.environ,
+                                 data / "sleeper.log")
+        launcher.remember("voice", pid)
+        self.assertTrue(launcher_mod.pid_alive(pid))
+        self.assertEqual(launcher.stop(), 0)
+        end = time.monotonic() + 5
+        while launcher_mod.pid_alive(pid) and time.monotonic() < end:
+            time.sleep(0.05)
+        self.assertFalse(launcher_mod.pid_alive(pid))
+        self.assertFalse(launcher.pid_file("voice").exists())
+        self.assertIn("Stopped: voice", self.said)
+        self.said.clear()
+        launcher.stop()
+        self.assertEqual(self.said, ["Nothing was running."])
+
+
+class DoctorTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.data, self.vc = make_install(self.root)
+        self.launcher = Launcher(data_dir=self.data, visionclaw=self.vc, root=HERE.parent.parent, say=lambda s: None,
+                                 port_open=lambda p: True)
+        self.real_which = pcdoctor.shutil.which
+        pcdoctor.shutil.which = lambda name: r"C:\Users\me\.local\bin\claude.exe" if name == "claude" else None
+
+    def tearDown(self):
+        pcdoctor.shutil.which = self.real_which
+        self.tmp.cleanup()
+
+    def run_check(self, **kw):
+        kw.setdefault("gateway_up", lambda: True)
+        kw.setdefault("tailscale", {"installed": True, "state": "Running", "dns": "pc.tail1234.ts.net",
+                                     "https": "https://pc.tail1234.ts.net", "serving": True})
+        kw.setdefault("reachable", lambda url: True)
+        return pcdoctor.check(self.launcher, **kw).render()
+
+    def test_everything_fine(self):
+        self.launcher.remember("voice", os.getpid())
+        (self.data / "persona.md").write_text("# me\n")
+        (self.data / "email-accounts.json").write_text(json.dumps([{"address": "a@gmail.com"}, {"address": "b@icloud.com"}]))
+        (self.data / "voice.env").write_text("ELEVEN_API_KEY=sk_secret_value\nDEEPGRAM_API_KEY=dg_secret_value\n")
+        (self.data / "voice.log").write_text("\n".join([
+            "2026-10-31 14:00:01,000 [10] call started in room room-1",
+            "2026-10-31 14:00:03,000 [10] quick voice: first words after 1.0s",
+            "2026-10-31 14:00:04,100 [10] line 1: first words after 4.2s",
+            "2026-10-31 14:00:09,300 [10] line 1: done after 7.4s, 2 tool call(s)",
+        ]))
+        out = self.run_check(quick=True)
+        for line in ("✓ VisionClaw's login service is running", "✓ the voice program is running the current code",
+                     "✓ the LiveKit keys are in VisionClaw's settings",
+                     "✓ the voice is ElevenLabs (run glasses doctor without --quick to test the key)",
+                     "✓ speech-to-text is Deepgram (run glasses doctor without --quick to test the key)",
+                     "✓ email accounts: a@gmail.com, b@icloud.com",
+                     "✓ the phone can reach this PC at https://pc.tail1234.ts.net",
+                     "✓ the quick voice answered after 1.0s (median of the last 1)",
+                     "✓ the work model started talking after 4.2s (median of the last 1)",
+                     "work requests were done after 7.4s on median; 1 of 1 used tools",
+                     "Everything is connected."):
+            self.assertIn(line, out)
+        self.assertNotIn("secret_value", out)
+
+    def test_keys_are_tested_and_refusals_explained(self):
+        self.launcher.remember("voice", os.getpid())
+        (self.data / "voice.env").write_text("ELEVEN_API_KEY=sk_secret_value\nDEEPGRAM_API_KEY=dg_secret_value\n")
+        out = self.run_check(
+            elevenlabs=lambda k: {"ok": False, "problem": "ElevenLabs blocked its free plan", "fix": "a paid plan lifts it"},
+            deepgram=lambda k: {"ok": True}, run_selftest=lambda: [])
+        self.assertIn("✗ the ElevenLabs voice can't speak: ElevenLabs blocked its free plan; the backup voice speaks instead", out)
+        self.assertIn("→ a paid plan lifts it", out)
+        self.assertIn("✓ speech-to-text is Deepgram, and its key (ending alue) works", out)
+        self.assertNotIn("secret_value", out)
+
+    def test_problems_get_a_fix(self):
+        out = self.run_check(gateway_up=lambda: False, quick=True,
+                             tailscale={"installed": True, "state": "NeedsLogin"})
+        self.assertIn("✗ VisionClaw's login service isn't answering", out)
+        self.assertIn("→ run: glasses start", out)
+        self.assertIn("✗ the voice program isn't running", out)
+        self.assertIn("✗ Tailscale isn't signed in (it says NeedsLogin)", out)
+        self.assertRegex(out, r"\d+ problems? found\.")
+
+    def test_a_stale_voice_program(self):
+        self.launcher.pid_file("voice").parent.mkdir(parents=True, exist_ok=True)
+        self.launcher.pid_file("voice").write_text(json.dumps({"pid": os.getpid(), "started": 1.0}))
+        self.assertIn("✗ the voice program is still running code from before your last update", self.run_check(quick=True))
+
+    def test_phone_checks(self):
+        report = pcdoctor.Report()
+        pcdoctor.check_phone(report, {"installed": False})
+        pcdoctor.check_phone(report, {"installed": True, "state": "Running", "https": "https://pc.ts.net", "serving": False})
+        pcdoctor.check_phone(report, {"installed": True, "state": "Running", "https": "https://pc.ts.net", "serving": True},
+                             reachable=lambda url: False)
+        text = report.render()
+        self.assertIn("Tailscale isn't installed", text)
+        self.assertIn("tailscale serve --bg 8788", text)
+        self.assertIn("Tailscale is sharing https://pc.ts.net, but it doesn't answer", text)
+
+    def test_credits_out_until_a_deepgram_key_is_added(self):
+        self.launcher.remember("voice", os.getpid())
+        (self.data / "voice.log").write_text(
+            "2026-10-31 14:00:01,000 [10] call started in room room-1\n"
+            "2026-10-31 14:00:02,001 [10] LiveKit Inference may be out of free credits. Add a Deepgram key\n")
+        self.assertIn("✗ LiveKit's free speech credits ran out, so it can't hear you", self.run_check(quick=True))
+        (self.data / "voice.env").write_text("DEEPGRAM_API_KEY=dg_secret_value\n")
+        self.assertNotIn("can't hear you", self.run_check(quick=True))
+
+    def test_live_test_results(self):
+        self.launcher.remember("voice", os.getpid())
+        out = self.run_check(run_selftest=lambda: [
+            {"test": "quick voice startup", "ok": True, "total_s": 0.7, "model": "haiku", "effort": "low", "cwd": "C:/Desktop"},
+            {"test": "quick answer", "ok": True, "first_s": 1.1, "total_s": 1.2, "reply": "OK", "credentials": "none"},
+            {"test": "hand-off", "ok": True, "first_s": 1.2, "reply": "[work] Sure, one sec.", "handed_off": True},
+            {"test": "simple question", "ok": True, "first_s": 9.5, "total_s": 9.6, "reply": "OK",
+             "connectors": {"plugin:small-business:gmail": "connected", "plugin:small-business:google-calendar": "needs-auth"}},
+            {"test": "web search", "ok": True, "first_s": 2.0, "total_s": 12.0, "reply": "Stocks fell, says Reuters.", "tools": ["Bash"]},
+        ])
+        self.assertIn("✓ quick voice: Claude Code started in 0.7s (haiku, effort low, in C:/Desktop)", out)
+        self.assertIn('✓ hand-off: the quick voice passed an email question to the work model, saying "Sure, one sec." after 1.2s', out)
+        self.assertIn("✗ simple question: first words after 9.5s, done in 9.6s (slow)", out)
+        self.assertIn("✓ plugin:small-business:gmail is connected", out)
+        self.assertIn("✗ plugin:small-business:google-calendar is needs-auth", out)
+        self.assertIn("✗ web search: the work model answered a news question without searching the web", out)
+        self.assertIn("✓ Claude Code uses your Claude subscription login", out)
+
+    def test_parse_voice_log_matches_the_mac_doctor(self):
+        stats = pcdoctor.parse_voice_log("\n".join([
+            "2026-10-31 14:00:01,000 [10] call started in room room-1",
+            "2026-10-31 14:00:04,000 [10] quick voice: first words after 0.9s",
+            "2026-10-31 14:00:05,100 [10] line 1: first words after 2.1s",
+            "2026-10-31 14:01:00,000 [10] line 1: connectors not connected: plugin:small-business:gmail, plugin:small-business:hubspot",
+            "2026-10-31 14:02:00,000 [10] voice error (tts): 429 Too Many Requests",
+            "2026-10-31 14:03:00,000 [10] line 2: claude exited with code 1",
+            "2026-10-31 14:03:01,000 [10] line 1: claude exited with code 0",
+            "2026-10-31 15:00:00,000 [10] line 1: Claude API error (billing_error): Credit balance is too low",
+            "not a log line",
+        ]))
+        self.assertEqual((stats.quick, stats.first_words, stats.calls, stats.crashes), ([0.9], [2.1], 1, 1))
+        self.assertEqual(stats.not_connected, ["plugin:small-business:gmail", "plugin:small-business:hubspot"])
+        self.assertEqual(stats.api_error, "billing_error")
+        self.assertEqual(stats.errors, ["2026-10-31 14:02:00,000  tts: 429 Too Many Requests"])
+        done = pcdoctor.parse_voice_log("2026-10-31 15:00:00,000 [10] line 1: Claude API error (billing_error): x\n"
+                                        "2026-10-31 15:05:00,000 [10] line 1: done after 2.0s, 0 tool call(s)")
+        self.assertIsNone(done.api_error)  # an answer after the error means it's fixed
+
+    def test_tailscale_address(self):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd[1:])
+            out = ({"status": json.dumps({"BackendState": "Running", "Self": {"DNSName": "pc.tail1234.ts.net."}}),
+                    "serve": "https://pc.tail1234.ts.net (tailnet only)\n|-- / proxy http://127.0.0.1:8788\n"})[cmd[1]]
+            return subprocess.CompletedProcess(cmd, 0, stdout=out)
+
+        info = pcdoctor.tailscale_address(run=run, which=lambda n: "tailscale", exists=lambda p: False)
+        self.assertEqual((info["state"], info["https"], info["serving"]), ("Running", "https://pc.tail1234.ts.net", True))
+        self.assertEqual(pcdoctor.tailscale_address(which=lambda n: None, exists=lambda p: False), {"installed": False})
+
+
+class SetupTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.said = []
+        self.ran = []
+        self.present = {"git", "winget"}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def setup_run(self, launcher, answers, answers_hidden=("secret1",), present=None):
+        present = self.present if present is None else present
+        answers, hidden = iter(answers), iter(answers_hidden)
+
+        def run(cmd, cwd=None, capture_output=False):
+            self.ran.append(cmd)
+            if cmd[:2] == ["git", "clone"]:
+                (launcher.visionclaw / "gateway").mkdir(parents=True)
+            if cmd[1:3] == ["install"] and cmd[0] == "npm":
+                (launcher.visionclaw / "gateway" / "node_modules").mkdir()
+            if cmd[1:3] == ["-m", "venv"]:
+                py = venv_python(launcher.data_dir)
+                py.parent.mkdir(parents=True, exist_ok=True)
+                py.write_text("")
+            if cmd[:2] == ["winget", "install"]:
+                present.add({"OpenJS.NodeJS.LTS": "node", "Tailscale.Tailscale": "tailscale"}[cmd[3]])
+                if cmd[3] == "OpenJS.NodeJS.LTS":
+                    present.add("npm")
+            return subprocess.CompletedProcess(cmd, 0 if "-R" not in cmd else 1)
+
+        def which(name):
+            return name if name in present else None
+
+        return setup_pc.setup(launcher, run=run, ask=lambda p: next(answers), askpass=lambda p: next(hidden),
+                              which=which, windows=True, path_refresh=lambda: None)
+
+    def test_a_fresh_pc(self):
+        launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
+                            say=self.said.append)
+        code = self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", "mycode"])
+        commands = [" ".join(c) for c in self.ran]
+        self.assertTrue(any(c.startswith("winget install --id OpenJS.NodeJS.LTS -e") for c in commands))
+        self.assertTrue(any(c.startswith("winget install --id Tailscale.Tailscale -e") for c in commands))
+        self.assertTrue(any(c.startswith("git clone https://github.com/sseanliu/VisionClaw") for c in commands))
+        self.assertIn("git checkout 3f39807", commands)
+        self.assertTrue(any(c.startswith("git apply ") and c.endswith("gateway-without-anthropic-key.patch") for c in commands))
+        self.assertIn("npm install", commands)
+        self.assertTrue(any("-m venv" in c for c in commands))
+        self.assertTrue(any("pip install --quiet -r" in c and c.endswith("requirements.txt") for c in commands))
+        env = envfile.read(launcher.visionclaw / "gateway" / ".env")
+        self.assertEqual((env["LIVEKIT_URL"], env["LIVEKIT_API_KEY"], env["LIVEKIT_API_SECRET"]),
+                         ("wss://p.livekit.cloud", "key1", "secret1"))
+        self.assertEqual(env["GATEWAY_TOKENS"], "mycode:me")
+        self.assertEqual((env["PORT"], env["ANTHROPIC_API_KEY"]), ("8788", "sk-ant-placeholder"))
+        self.assertEqual(len(env["GATEWAY_SERVICE_TOKEN"]), 32)
+        # Claude Code isn't installed, and setup says how, rather than running a downloaded script itself
+        self.assertEqual(code, 1)
+        self.assertTrue(any("irm https://claude.ai/install.ps1 | iex" in s for s in self.said))
+        self.assertEqual(oct((launcher.visionclaw / "gateway" / ".env").stat().st_mode & 0o777), "0o600")
+
+    def test_running_it_again_does_nothing_it_already_did(self):
+        launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
+                            say=self.said.append)
+        self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""])
+        first_env = (launcher.visionclaw / "gateway" / ".env").read_text()
+        self.ran.clear()
+        self.said.clear()
+        code = self.setup_run(launcher, [], present=self.present | {"claude"})
+        self.assertEqual(code, 0)
+        commands = [" ".join(c) for c in self.ran]
+        self.assertFalse(any(c.startswith(("winget", "git clone", "npm install")) or "-m venv" in c for c in commands))
+        self.assertEqual((launcher.visionclaw / "gateway" / ".env").read_text(), first_env)
+        self.assertTrue(any("Setup is done" in s for s in self.said))
+        # a code was made for the user, because they pressed Enter
+        self.assertRegex(first_env, r"GATEWAY_TOKENS=[0-9a-f]{16}:me")
+
+    def test_a_pc_without_winget_is_told_what_to_install(self):
+        launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
+                            say=self.said.append)
+        self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""], present={"git"})
+        self.assertFalse(any(c[0] == "winget" for c in self.ran))
+        self.assertTrue(any("Node.js isn't installed" in s for s in self.said))
+
+
+class CliTest(unittest.TestCase):
+    def test_autostart_writes_and_removes_the_startup_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = os.environ.get("APPDATA")
+            os.environ["APPDATA"] = tmp
+            said = []
+            try:
+                self.assertEqual(glasses_cli.autostart(True, said.append, windows=True), 0)
+                script = glasses_cli.startup_script()
+                self.assertTrue(str(script).endswith(os.path.join("Startup", "claude-glasses.cmd")))
+                text = script.read_text()
+                self.assertIn(f'"{sys.executable}"', text)
+                self.assertIn("glasses.py", text)
+                self.assertTrue(text.rstrip().endswith("start --quiet"))
+                self.assertEqual(glasses_cli.autostart(False, said.append, windows=True), 0)
+                self.assertFalse(script.exists())
+                self.assertEqual(glasses_cli.autostart(True, said.append, windows=False), 1)
+            finally:
+                if real is None:
+                    os.environ.pop("APPDATA", None)
+                else:
+                    os.environ["APPDATA"] = real
+
+    def test_help_and_unknown_commands(self):
+        out = io.StringIO()
+        real = sys.stdout
+        sys.stdout = out
+        try:
+            self.assertEqual(glasses_cli.main([]), 0)
+            self.assertEqual(glasses_cli.main(["nonsense"]), 1)
+        finally:
+            sys.stdout = real
+        self.assertIn("glasses start [folder ...]", out.getvalue())
+        self.assertIn("I don't know 'nonsense'", out.getvalue())
+
+    def test_the_entry_point_and_shortcut_exist(self):
+        root = HERE.parent.parent
+        result = subprocess.run([sys.executable, str(root / "glasses.py"), "help"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("glasses setup", result.stdout)
+        cmd = (root / "glasses.cmd").read_text()
+        self.assertIn('py "%~dp0glasses.py" %*', cmd)
+        self.assertNotIn("||", cmd)  # `A && B || C` would run glasses twice when it fails
+        self.assertNotIn("/dev/null", cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()

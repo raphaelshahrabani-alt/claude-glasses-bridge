@@ -1,0 +1,13 @@
+diff --git a/gateway/src/connect.ts b/gateway/src/connect.ts
+index 335a709..77fe7bb 100644
+--- a/gateway/src/connect.ts
++++ b/gateway/src/connect.ts
+@@ -542,7 +542,7 @@ export function registerConnectRoutes(
+       res.json({ apps });
+     } catch (err) {
+       console.error("[apps] listing failed:", err);
+-      res.status(502).json({ error: { message: "could not list apps" } });
++      res.json({ apps: [] });
+     }
+   });
+ 

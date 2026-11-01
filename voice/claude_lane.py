@@ -15,6 +15,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Union
@@ -52,6 +53,30 @@ ALWAYS_ASK = ["mcp__email__send_email"] + [
 ]
 
 
+def launch_command(cmd: list[str], windows: bool | None = None, which=shutil.which) -> list[str]:
+    """The command as asyncio can start it. On Windows `claude` is normally claude.exe, but an npm
+    install makes a .cmd shim, which only cmd.exe can run."""
+    if not (os.name == "nt" if windows is None else windows):
+        return cmd
+    path = which(cmd[0]) or cmd[0]
+    if path.lower().endswith((".cmd", ".bat")):
+        return ["cmd.exe", "/c", path, *cmd[1:]]
+    return [path, *cmd[1:]]
+
+
+def git_bash_path(windows: bool | None = None, exists=os.path.exists, which=shutil.which) -> str | None:
+    """Claude Code on Windows uses Git's bash when it can find it; say where it is if it's not on PATH."""
+    if not (os.name == "nt" if windows is None else windows):
+        return None
+    candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"),
+    ]
+    found = next((c for c in candidates if c and exists(c)), None)
+    return found or (which("bash") if windows else None)
+
+
 @dataclass
 class LaneConfig:
     cwd: str
@@ -75,6 +100,9 @@ class LaneConfig:
     chrome: bool = False
     # More MCP servers (such as glasses-email), on top of the user's own.
     mcp_config: str | None = None
+    # Where to write the "always ask" settings. A file keeps JSON quoting off the
+    # command line, which Windows mangles; without a path they go inline.
+    settings_path: str | None = None
 
     def command(self) -> list[str]:
         cmd = [
@@ -108,7 +136,12 @@ class LaneConfig:
         if self.allowed_tools:
             cmd += ["--allowedTools", ",".join(self.allowed_tools)]
         if self.ask_tools:
-            cmd += ["--settings", json.dumps({"permissions": {"ask": self.ask_tools}})]
+            settings = json.dumps({"permissions": {"ask": self.ask_tools}})
+            if self.settings_path:
+                with open(self.settings_path, "w", encoding="utf-8") as f:
+                    f.write(settings)
+                settings = self.settings_path
+            cmd += ["--settings", settings]
         if self.resume:
             cmd += ["--resume", self.resume]
         return cmd
@@ -242,6 +275,10 @@ class Lane:
             env.pop(key, None)
         if not self.config.use_api_key and env.pop("ANTHROPIC_API_KEY", None):
             log.info("%s: leaving ANTHROPIC_API_KEY out, so Claude Code uses your Claude login", self.name)
+        bash = git_bash_path()
+        if bash and "CLAUDE_CODE_GIT_BASH_PATH" not in env:
+            env["CLAUDE_CODE_GIT_BASH_PATH"] = bash
+        cmd = launch_command(cmd)
         self.started_at = time.monotonic()
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,

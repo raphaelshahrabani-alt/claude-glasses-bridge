@@ -166,14 +166,24 @@ class Store:
             pass
 
 
-def mx_provider(domain: str) -> str | None:
+def mx_records(domain: str) -> str:
+    """The mail servers a domain uses, as text, from dig (Mac, Linux) or nslookup (Windows)."""
     dig = shutil.which("dig")
-    if not dig:
-        return None
     try:
-        out = subprocess.run([dig, "+short", "MX", domain], capture_output=True, text=True, timeout=5).stdout.lower()
+        if dig:
+            return subprocess.run([dig, "+short", "MX", domain], capture_output=True, text=True, timeout=5).stdout.lower()
+        nslookup = shutil.which("nslookup")
+        if nslookup:
+            out = subprocess.run([nslookup, "-type=MX", domain], capture_output=True, text=True, timeout=10).stdout.lower()
+            # only the answers: the first lines name the DNS server that was asked
+            return "\n".join(line for line in out.splitlines() if "mail exchanger" in line)
     except (OSError, subprocess.SubprocessError):
-        return None
+        pass
+    return ""
+
+
+def mx_provider(domain: str) -> str | None:
+    out = mx_records(domain)
     if "outlook.com" in out:
         return "microsoft"
     for hint, provider in MX_HINTS.items():

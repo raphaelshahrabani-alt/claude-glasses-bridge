@@ -4,13 +4,14 @@
     pickvoice.py VOICE_ID     hear one voice by its id (for a voice you added from elevenlabs.io/voice-library)
 
 Samples are made with your own ElevenLabs key, in the same model the glasses use, and
-played with afplay (the Mac's player). Keeping one writes GLASSES_ELEVENLABS_VOICE into
+played with the Mac's afplay, or Windows' own media player. Keeping one writes GLASSES_ELEVENLABS_VOICE into
 ~/.claude-glasses-bridge/voice.env; restart the voice window to use it.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -76,9 +77,31 @@ def sample(key: str, voice: str, model: str, opener: Opener = urllib.request.url
         return response.read()
 
 
+def player_command(path: Path, platform: str | None = None) -> list[str] | None:
+    """How to play an mp3 here: afplay on a Mac, Windows' own media player through PowerShell."""
+    platform = platform or sys.platform
+    if platform == "darwin":
+        return ["afplay", str(path)]
+    if platform.startswith("win"):
+        quoted = str(path).replace("'", "''")
+        script = (
+            "Add-Type -AssemblyName presentationCore; $p = New-Object System.Windows.Media.MediaPlayer; "
+            f"$p.Open([uri]'{quoted}'); while (-not $p.NaturalDuration.HasTimeSpan) {{ Start-Sleep -Milliseconds 100 }}; "
+            "$p.Play(); Start-Sleep -Seconds ([math]::Ceiling($p.NaturalDuration.TimeSpan.TotalSeconds) + 1)"
+        )
+        return ["powershell", "-NoProfile", "-Command", script]
+    for player in ("mpg123", "ffplay", "mpv"):
+        if shutil.which(player):
+            return [player, *(["-nodisp", "-autoexit"] if player == "ffplay" else []), str(path)]
+    return None
+
+
 def afplay(path: Path) -> bool:
+    command = player_command(path)
+    if command is None:
+        return False
     try:
-        return subprocess.run(["afplay", str(path)], timeout=60).returncode == 0
+        return subprocess.run(command, timeout=90).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 

@@ -160,6 +160,7 @@ def brain_config(persona: str) -> BrainConfig:
         use_api_key=use_api_key,
         chrome=os.environ.get("GLASSES_CHROME", "1") != "0",
         mcp_config=mcp_config(),
+        settings_path=str(DATA_DIR / "voice-settings.json"),
     )
     # A fast model with no tools answers first: small talk and quick facts
     # itself, and "on it" for everything else while the work model starts.
@@ -446,5 +447,21 @@ async def entrypoint(ctx: JobContext) -> None:
         await brain._say(f"While you were away: {text}", "")
 
 
+def keep_awake() -> None:
+    """On Windows, stop the PC sleeping while the voice is running (what caffeinate does on a Mac)."""
+    if os.name != "nt":
+        return
+    import ctypes
+    import threading
+
+    def hold() -> None:
+        # The setting lasts as long as this thread does.
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)  # CONTINUOUS | SYSTEM_REQUIRED
+        threading.Event().wait()
+
+    threading.Thread(target=hold, daemon=True, name="keep-awake").start()
+
+
 if __name__ == "__main__":
+    keep_awake()
     cli.run_app(server)

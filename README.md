@@ -74,6 +74,15 @@ bun run talk --events              # watch everything crossing the bridge
 
 Either way the patched app keeps the glasses camera off during calls. When you ask about something in front of you, the worker turns it on for one picture, so the capture light doesn't stay on (iPhone app only).
 
+## On a Windows PC
+
+The same setup runs on a Windows PC that stays on, so it doesn't depend on your Mac being awake, and
+with Tailscale your phone can reach it from anywhere instead of only on your home Wi-Fi. It uses the
+`glasses` command (`glasses setup`, `glasses start`, `glasses doctor`, ...) in place of the Mac's
+`bin/` scripts. See [docs/WINDOWS.md](docs/WINDOWS.md) for the step-by-step guide. That path was built
+and tested on Linux and macOS with stand-ins for Windows, not on a real Windows PC, so the first run is
+its real test.
+
 ## Direct voice
 
 `bin/glasses-voice` runs `voice/worker.py`, a LiveKit agent that joins your calls in place of VisionClaw's Gemini worker (it stops that one if it's running). The first run sets up its own Python environment in `~/.claude-glasses-bridge/voice-venv`; it reads the LiveKit keys from `~/VisionClaw/gateway/.env`.
