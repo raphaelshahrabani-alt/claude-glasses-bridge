@@ -99,7 +99,7 @@ async function checkDirect() {
     }
   }
   if (geminiPid) {
-    bad("VisionClaw's Gemini worker is running too, so two voices may answer", 'pkill -f "main.py start"')
+    bad("VisionClaw's Gemini worker is running too, so a call may go to either one at random", 'pkill -f "main.py start"')
   }
 
   const gatewayEnv = join(visionclaw, 'gateway', '.env')
@@ -318,7 +318,7 @@ async function checkGemini() {
   }
 
   if (directPid) {
-    bad('the direct voice worker is running too, so two voices may answer', 'pkill -f "voice/worker.py start"')
+    bad('the direct voice worker is running too, so a call may go to either one at random', 'pkill -f "voice/worker.py start"')
   }
 
   const workerPid = geminiPid

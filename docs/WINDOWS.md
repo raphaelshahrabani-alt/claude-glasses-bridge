@@ -146,7 +146,7 @@ glasses autostart on
 - Stop the PC sleeping: **Settings → System → Power → Screen and sleep**, and set *When plugged in,
   put my device to sleep after* to **Never**. (The voice program also asks Windows to stay awake while
   it runs.)
-- On the **Mac**, quit Terminal (⌘Q → Terminate). Two copies running would both answer.
+- On the **Mac**, quit Terminal (⌘Q → Terminate). If both are running, each call goes to one of them at random, which is confusing.
 
 ## Part 5: Check it
 

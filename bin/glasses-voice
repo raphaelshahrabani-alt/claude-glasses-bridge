@@ -74,7 +74,7 @@ load_env "$visionclaw/gateway/.env" '^LIVEKIT_(URL|API_KEY|API_SECRET)$'
   die "no LiveKit keys: expected LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET in $visionclaw/gateway/.env"
 command -v "${CLAUDE_BIN:-claude}" >/dev/null || die "claude is not on your PATH"
 
-# Two workers in the same LiveKit project would both answer every call.
+# With two workers in the same LiveKit project, each call goes to one of them at random.
 if pgrep -f "main.py start" >/dev/null 2>&1; then
   echo "glasses-voice: stopping VisionClaw's Gemini voice worker, this one replaces it"
   pkill -f "main.py start" || true
