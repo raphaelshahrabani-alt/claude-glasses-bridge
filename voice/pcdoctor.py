@@ -233,6 +233,10 @@ def check(launcher: Launcher, quick: bool = False, report: Report | None = None,
             result = (elevenlabs or voicecheck.check)(eleven)
             if result.get("ok"):
                 report.ok(f"the voice is ElevenLabs, and its key (ending {eleven[-4:]}) works")
+                if result.get("note"):
+                    report.info(f"({result['note']})")
+            elif result.get("status") in ("unchecked", "network"):
+                report.info(f"(couldn't test the ElevenLabs key: {result.get('problem')})")
             else:
                 report.bad(f"the ElevenLabs voice can't speak: {result.get('problem')}; the backup voice speaks instead",
                            result.get("fix"))

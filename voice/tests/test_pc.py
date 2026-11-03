@@ -79,37 +79,58 @@ class KeysTest(unittest.TestCase):
 
     def test_a_good_elevenlabs_key_is_kept(self):
         (self.dir / "voice.env").write_text("GLASSES_WORK_EFFORT=high\n")
-        code = self.save("ELEVEN_API_KEY", "  sk_new 5678 \n", check_eleven=lambda k: {"ok": True})
+        code = self.save("ELEVEN_API_KEY", "  sk_new_value 1234567890 \n", check_eleven=lambda k: {"ok": True})
         self.assertEqual(code, 0)
-        self.assertEqual(self.env(), "GLASSES_WORK_EFFORT=high\nELEVEN_API_KEY=sk_new5678\n")
+        self.assertEqual(self.env(), "GLASSES_WORK_EFFORT=high\nELEVEN_API_KEY=sk_new_value1234567890\n")
         self.assertIn("ElevenLabs accepts this key", self.out.getvalue())
-        self.assertNotIn("sk_new5678", self.out.getvalue())  # only the last four are shown
+        self.assertNotIn("sk_new_value1234567890", self.out.getvalue())  # only the last four are shown
 
     def test_an_invalid_key_is_not_kept_and_the_old_one_stays(self):
         (self.dir / "voice.env").write_text("ELEVEN_API_KEY=old_key\n")
-        code = self.save("ELEVEN_API_KEY", "typo", check_eleven=lambda k: {"ok": False, "status": "invalid_api_key"})
+        code = self.save("ELEVEN_API_KEY", "typo-typo-typo-typo-typo", check_eleven=lambda k: {"ok": False, "status": "invalid_api_key"})
         self.assertEqual(code, 1)
         self.assertEqual(self.env(), "ELEVEN_API_KEY=old_key\n")
         self.assertIn("did not keep it", self.err.getvalue())
 
     def test_an_invalid_key_with_no_earlier_file_leaves_no_file(self):
-        code = self.save("DEEPGRAM_API_KEY", "typo", check_deepgram=lambda k: {"ok": False, "status": "invalid_api_key"})
+        code = self.save("DEEPGRAM_API_KEY", "typo-typo-typo-typo-typo", check_deepgram=lambda k: {"ok": False, "status": "invalid_api_key"})
         self.assertEqual(code, 1)
         self.assertIsNone(self.env())
         self.assertIn("console.deepgram.com", self.err.getvalue())
 
+    def test_a_key_accepted_with_a_note_shows_the_note(self):
+        code = self.save("ELEVEN_API_KEY", "key-0123456789abcdef", check_eleven=lambda k: {"ok": True, "note": "the test speech was refused (400)"})
+        self.assertEqual(code, 0)
+        self.assertIn("ElevenLabs accepts this key", self.out.getvalue())
+        self.assertIn("(the test speech was refused (400))", self.out.getvalue())
+
+    def test_an_unrecognised_reply_is_not_called_fine(self):
+        code = self.save("ELEVEN_API_KEY", "key-0123456789abcdef", check_eleven=lambda k: {
+            "ok": False, "status": "unchecked", "problem": "ElevenLabs answered unexpectedly: 400", "fix": "x"})
+        self.assertEqual(code, 0)
+        self.assertIn("Couldn't check it with ElevenLabs", self.out.getvalue())
+        self.assertNotIn("itself is fine", self.err.getvalue())
+
     def test_an_account_problem_keeps_the_key_and_says_it(self):
-        code = self.save("ELEVEN_API_KEY", "k1", check_eleven=lambda k: {
+        code = self.save("ELEVEN_API_KEY", "key-0123456789abcdef", check_eleven=lambda k: {
             "ok": False, "status": "quota_exceeded", "problem": "the ElevenLabs account is out of credits", "fix": "upgrade"})
         self.assertEqual(code, 0)
-        self.assertEqual(self.env(), "ELEVEN_API_KEY=k1\n")
+        self.assertEqual(self.env(), "ELEVEN_API_KEY=key-0123456789abcdef\n")
         self.assertIn("The key itself is fine, but: the ElevenLabs account is out of credits", self.err.getvalue())
 
     def test_no_internet_keeps_the_key_without_claiming_it_works(self):
-        code = self.save("DEEPGRAM_API_KEY", "k1", check_deepgram=lambda k: {"ok": False, "status": "network", "problem": "offline"})
+        code = self.save("DEEPGRAM_API_KEY", "key-0123456789abcdef", check_deepgram=lambda k: {"ok": False, "status": "network", "problem": "offline"})
         self.assertEqual(code, 0)
         self.assertIn("Couldn't check it with Deepgram", self.out.getvalue())
         self.assertNotIn("itself is fine", self.err.getvalue())
+
+    def test_a_paste_that_went_wrong_is_not_saved_as_a_key(self):
+        (self.dir / "voice.env").write_text("ELEVEN_API_KEY=" + "x" * 40 + "\n")
+        for junk in ("=", "-", "abc", "sk_short", "\x16"):
+            self.assertEqual(self.save("ELEVEN_API_KEY", junk), 1, junk)
+        self.assertEqual(self.env(), "ELEVEN_API_KEY=" + "x" * 40 + "\n")  # the good key is still there
+        self.assertIn("doesn't look like a key", self.err.getvalue())
+        self.assertEqual(self.save("GLASSES_THING", "short"), 0)  # only keys are held to this
 
     def test_other_keys_and_empty_pastes(self):
         self.assertEqual(self.save("GLASSES_THING", "v"), 0)

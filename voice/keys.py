@@ -31,6 +31,13 @@ def save(name: str, ask: Callable[[str], str] = getpass.getpass, data_dir: Path 
     if not value:
         print("Nothing was pasted, so nothing changed.", file=sys.stderr)
         return 1
+    if name.endswith("_KEY") and (len(value) < 16 or not value.isprintable()):
+        # real keys are 40 characters or more; a paste that went wrong is often one odd character
+        print(f"That doesn't look like a key ({len(value)} character{'' if len(value) == 1 else 's'}; real ones are much "
+              "longer). Nothing was saved.", file=sys.stderr)
+        print("  Copy the key again, wait for the 'Paste your ...' line, then right-click in this window to paste.",
+              file=sys.stderr)
+        return 1
     file = data_dir / "voice.env"
     before = file.read_text(encoding="utf-8") if file.exists() else None
     envfile.set_value(file, name, value)
@@ -48,6 +55,8 @@ def save(name: str, ask: Callable[[str], str] = getpass.getpass, data_dir: Path 
     status = result.get("status")
     if result.get("ok"):
         print(f"✓ {service} accepts this key. Restart the glasses to use it.")
+        if result.get("note"):
+            print(f"  ({result['note']})")
     elif status == "invalid_api_key":
         if before is None:
             file.unlink(missing_ok=True)

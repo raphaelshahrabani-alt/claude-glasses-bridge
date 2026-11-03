@@ -80,6 +80,38 @@ class VoiceCheckTest(unittest.TestCase):
             self.assertIn(words, result["problem"], status)
             self.assertTrue(result["fix"])
 
+    def test_a_reply_nobody_recognises_is_not_blamed_on_the_key(self):
+        def opener(request, timeout=0):
+            if request.full_url.endswith("/models"):
+                return Response(b"[]")
+            raise http_error(400, {"detail": [{"loc": ["query", "output_format"], "msg": "not a valid format"}]})
+
+        result = voicecheck.check("k", opener=opener)
+        self.assertTrue(result["ok"])  # the key is accepted; only the test speech was refused
+        self.assertIn("not a valid format", result["note"])
+        self.assertIn("a real call is the real test", result["note"])
+
+    def test_a_refused_test_speech_and_a_rejected_key_is_an_invalid_key(self):
+        def opener(request, timeout=0):
+            raise http_error(401 if request.full_url.endswith("/models") else 400, {"detail": "nope"})
+
+        self.assertEqual(voicecheck.check("k", opener=opener)["status"], "invalid_api_key")
+
+    def test_when_nothing_can_be_told_it_says_unchecked_not_fine(self):
+        def opener(request, timeout=0):
+            raise http_error(400, {"detail": "Bad Request"})
+
+        result = voicecheck.check("k", opener=opener)
+        self.assertEqual(result["status"], "unchecked")
+        self.assertIn("400: Bad Request", result["problem"])
+        self.assertNotIn("fine", result["problem"])
+
+    def test_a_non_json_reply_body_is_shown(self):
+        def opener(request, timeout=0):
+            raise urllib.error.HTTPError("https://x", 400, "Bad Request", {}, io.BytesIO(b"<html>blocked by firewall</html>"))
+
+        self.assertIn("blocked by firewall", voicecheck.check("k", opener=opener)["problem"])
+
     def test_a_401_with_no_reason_means_the_key_is_wrong(self):
         result = voicecheck.check("k", opener=opener_raising(http_error(401, {"detail": "nope"})))
         self.assertEqual(result["status"], "invalid_api_key")

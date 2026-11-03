@@ -21,6 +21,7 @@ from typing import Any, Callable
 DATA_DIR = Path(os.environ.get("GLASSES_DATA_DIR", Path.home() / ".claude-glasses-bridge")).expanduser()
 DEFAULT_VOICE = "cjVigY5qzO86Huf0OWal"
 DEFAULT_MODEL = "eleven_turbo_v2_5"
+API = "https://api.elevenlabs.io/v1"
 SAVE_AGAIN = "copy the key again from elevenlabs.io (API Keys) and run: ~/claude-glasses-bridge/bin/glasses-key ELEVEN_API_KEY"
 
 FIXES = {
@@ -88,6 +89,23 @@ def check_deepgram(key: str, opener: Callable[..., Any] = urllib.request.urlopen
                 "fix": "check the Mac's internet connection"}
 
 
+def _reply(e: urllib.error.HTTPError) -> tuple[str, str]:
+    """(status, message) from an ElevenLabs error reply, whatever shape it comes in."""
+    raw = e.read() or b""
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return "", raw.decode("utf-8", "replace").strip()[:200]
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        return str(detail.get("status") or ""), str(detail.get("message") or "")
+    if isinstance(detail, list):
+        return "", "; ".join(str(d.get("msg", d)) if isinstance(d, dict) else str(d) for d in detail)[:200]
+    if isinstance(detail, str):
+        return "", detail
+    return "", str(body)[:200]
+
+
 def check(key: str, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL,
           opener: Callable[..., Any] = urllib.request.urlopen) -> dict[str, Any]:
     request = urllib.request.Request(
@@ -101,21 +119,30 @@ def check(key: str, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL,
             response.read(64)
         return {"ok": True}
     except urllib.error.HTTPError as e:
-        try:
-            body = json.loads(e.read() or b"{}")
-        except (json.JSONDecodeError, ValueError):
-            body = {}
-        detail = body.get("detail") if isinstance(body, dict) else None
-        status = (detail.get("status") if isinstance(detail, dict) else None) or ""
-        message = (detail.get("message") if isinstance(detail, dict) else detail) or e.reason
+        status, message = _reply(e)
         if not status and e.code == 401:
             status = "invalid_api_key"
-        problem, fix = FIXES.get(status, (f"ElevenLabs refused it ({e.code} {status}): {message}", "see the message"))
-        return {"ok": False, "status": status or str(e.code), "problem": problem, "fix": fix,
-                "message": str(message)[:300]}
+        if status in FIXES:
+            problem, fix = FIXES[status]
+            return {"ok": False, "status": status, "problem": problem, "fix": fix, "message": message[:300]}
+        # A reply we don't recognise says little about the key. Ask a simpler question: is it a key at all?
+        refused = f"the test speech was refused ({e.code}{': ' + message if message else ''})"
+        probe = urllib.request.Request(f"{API}/models", headers={"xi-api-key": key})
+        try:
+            with opener(probe, timeout=20) as response:
+                response.read(64)
+            return {"ok": True, "note": f"ElevenLabs accepts the key, but {refused}; a real call is the real test"}
+        except urllib.error.HTTPError as p:
+            if p.code == 401 and _reply(p)[0] in ("", "invalid_api_key"):
+                problem, fix = FIXES["invalid_api_key"]
+                return {"ok": False, "status": "invalid_api_key", "problem": problem, "fix": fix}
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        return {"ok": False, "status": "unchecked", "problem": f"ElevenLabs answered unexpectedly: {refused}",
+                "fix": "a real call is the real test; send a screenshot of this message if the voice stays silent"}
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         return {"ok": False, "status": "network", "problem": f"couldn't reach ElevenLabs: {e}",
-                "fix": "check the Mac's internet connection"}
+                "fix": "check the internet connection"}
 
 
 def main(argv: list[str]) -> int:
@@ -137,6 +164,8 @@ def main(argv: list[str]) -> int:
         print(json.dumps(result))
     elif result["ok"]:
         print(f"✓ {label} works with the key ending in {result['key_ends']}.")
+        if result.get("note"):
+            print(f"  ({result['note']})")
     else:
         print(f"✗ {label} has a problem: {result['problem']}.")
         print(f"  → {result['fix']}")
