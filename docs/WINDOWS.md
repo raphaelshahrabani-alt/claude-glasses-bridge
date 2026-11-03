@@ -78,6 +78,9 @@ downloads VisionClaw, installs everything, and asks for your LiveKit details:
 If it prints **Still to do**, do those things, then run `py glasses.py setup` again. It picks up where
 it left off and skips what's done.
 
+If you need a new access code (for example, because it showed up in a screenshot), run
+`glasses newcode`, write down the new one, and restart with `glasses stop` then `glasses start`.
+
 **5. Make `glasses` work from anywhere** (paste once, then open a new PowerShell window)
 
 ```powershell

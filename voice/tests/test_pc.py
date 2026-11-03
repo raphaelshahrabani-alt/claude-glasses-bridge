@@ -480,6 +480,27 @@ class SetupTest(unittest.TestCase):
         self.assertTrue(any("Node.js isn't installed: download it from https://nodejs.org" in s for s in self.said))
 
 
+class AccessCodeTest(unittest.TestCase):
+    def test_a_new_code_replaces_the_old_one_and_keeps_everything_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".env"
+            path.write_text("PORT=8788\nGATEWAY_TOKENS=oldcode123:me\nLIVEKIT_URL=wss://x\n")
+            code = setup_pc.new_access_code(path, make=lambda: "newcode456")
+            self.assertEqual(code, "newcode456")
+            env = envfile.read(path)
+            self.assertEqual((env["GATEWAY_TOKENS"], env["PORT"], env["LIVEKIT_URL"]), ("newcode456:me", "8788", "wss://x"))
+            self.assertNotIn("oldcode123", path.read_text())
+            self.assertNotEqual(setup_pc.new_access_code(path), "newcode456")  # a real random one by default
+
+    def test_it_refuses_a_settings_file_it_did_not_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".env"
+            path.write_text("GATEWAY_TOKENS=a:me,b:you\n")
+            self.assertIsNone(setup_pc.new_access_code(path))
+            self.assertEqual(path.read_text(), "GATEWAY_TOKENS=a:me,b:you\n")
+            self.assertIsNone(setup_pc.new_access_code(Path(tmp) / "missing.env"))
+
+
 class CliTest(unittest.TestCase):
     def test_autostart_writes_and_removes_the_startup_file(self):
         with tempfile.TemporaryDirectory() as tmp:

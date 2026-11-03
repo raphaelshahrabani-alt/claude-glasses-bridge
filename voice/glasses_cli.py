@@ -18,6 +18,7 @@ USAGE = """glasses: your Meta glasses assistant, on this PC
   glasses status              what is running
   glasses doctor              check every piece and say what to fix (--quick skips the live test)
   glasses phone               let your phone reach this PC from anywhere (Tailscale)
+  glasses newcode             make a new access code for the phone app
   glasses key NAME            save a key: ELEVEN_API_KEY (voice) or DEEPGRAM_API_KEY (hearing)
   glasses email add you@example.com | list | remove you@example.com
   glasses pick-voice          hear the voices and pick one
@@ -130,6 +131,19 @@ def main(argv: list[str]) -> int:
         return save(rest[0] if rest else "")
     if command == "phone":
         return phone(launcher)
+    if command == "newcode":
+        from setup_pc import new_access_code
+
+        env_file = launcher.visionclaw / "gateway" / ".env"
+        code = new_access_code(env_file)
+        if code is None:
+            print(f"I can't change the code in {env_file}: it isn't the simple one-code kind. Edit GATEWAY_TOKENS there.")
+            return 1
+        print(f"Your new access code is: {code}")
+        print("Write it down; it's what you type into the phone app. The old one no longer works.")
+        if launcher.status()["gateway"]:
+            print("The login service is running, so restart it to use the new code: glasses stop, then glasses start")
+        return 0
     if command == "profile":
         path = launcher.data_dir / "persona.md"
         if not path.exists():

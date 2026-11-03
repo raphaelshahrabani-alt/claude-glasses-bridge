@@ -197,3 +197,14 @@ def write_gateway_env(path: Path, ask: Callable[[str], str], askpass: Callable[[
         f.write("\n".join(lines) + "\n")
     say("  ✓ saved")
     return True
+
+
+def new_access_code(path: Path, make: Callable[[], str] = lambda: secrets.token_hex(8)) -> str | None:
+    """Replaces the phone app's access code in VisionClaw's settings. None if the file isn't the simple
+    one-code kind that `glasses setup` writes."""
+    entries = [t for t in envfile.read(path).get("GATEWAY_TOKENS", "").split(",") if t]
+    if len(entries) != 1 or ":" not in entries[0]:
+        return None
+    code = make()
+    envfile.set_value(path, "GATEWAY_TOKENS", f"{code}:{entries[0].split(':', 1)[1]}")
+    return code
