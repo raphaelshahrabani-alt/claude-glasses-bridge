@@ -23,7 +23,11 @@ from launcher import ROOT, Launcher, venv_python  # noqa: E402
 VISIONCLAW_REPO = "https://github.com/sseanliu/VisionClaw"
 VISIONCLAW_COMMIT = "3f39807"  # the version the patches in integrations/visionclaw were made for
 GATEWAY_PATCH = "gateway-without-anthropic-key.patch"
-WINGET = [("node", "OpenJS.NodeJS.LTS", "Node.js"), ("tailscale", "Tailscale.Tailscale", "Tailscale")]
+WINGET_TIMEOUT_S = 600  # winget can hang on some PCs; don't wait for ever
+WINGET = [
+    ("node", "OpenJS.NodeJS.LTS", "Node.js", "https://nodejs.org (the LTS button)"),
+    ("tailscale", "Tailscale.Tailscale", "Tailscale", "https://tailscale.com/download/windows"),
+]
 CLAUDE_INSTALL = "irm https://claude.ai/install.ps1 | iex"
 
 
@@ -55,10 +59,13 @@ def setup(launcher: Launcher | None = None, run: Callable[..., "subprocess.Compl
     windows = (os.name == "nt") if windows is None else windows
     todo: list[str] = []
 
-    def do(cmd: list[str], cwd: Path | None = None) -> bool:
+    def do(cmd: list[str], cwd: Path | None = None, timeout: float | None = None) -> bool:
         say("  $ " + " ".join(cmd))
         try:
-            return run(cmd, cwd=str(cwd) if cwd else None).returncode == 0
+            return run(cmd, cwd=str(cwd) if cwd else None, timeout=timeout).returncode == 0
+        except subprocess.TimeoutExpired:
+            say(f"  ✗ {cmd[0]} didn't finish in {int((timeout or 0) / 60)} minutes, so I stopped it")
+            return False
         except OSError as e:
             say(f"  ✗ couldn't run {cmd[0]}: {e}")
             return False
@@ -72,16 +79,17 @@ def setup(launcher: Launcher | None = None, run: Callable[..., "subprocess.Compl
     say("2. Installing the programs it needs")
     if not which("git"):
         todo.append("Git isn't installed: winget install --id Git.Git -e   (then open a new PowerShell window)")
-    for exe, package, label in WINGET:
+    for exe, package, label, website in WINGET:
         if which(exe) or (exe == "tailscale" and Path(r"C:\Program Files\Tailscale\tailscale.exe").exists()):
             say(f"  ✓ {label}")
             continue
         if not (windows and which("winget")):
-            todo.append(f"{label} isn't installed: install it from its website, then run this again")
+            todo.append(f"{label} isn't installed: download it from {website}, install it, then run this again")
             continue
         say(f"  installing {label} (Windows may ask for permission; click Yes)")
-        if not do(["winget", "install", "--id", package, "-e", "--accept-package-agreements", "--accept-source-agreements"]):
-            todo.append(f"{label} didn't install: try again, or install it from its website")
+        if not do(["winget", "install", "--id", package, "-e", "--source", "winget", "--accept-package-agreements",
+                   "--accept-source-agreements"], timeout=WINGET_TIMEOUT_S):
+            todo.append(f"{label} didn't install: download it from {website}, install it, then run this again")
     path_refresh()
     if which("claude"):
         say("  ✓ Claude Code")

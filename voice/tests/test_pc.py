@@ -386,6 +386,7 @@ class SetupTest(unittest.TestCase):
         self.said = []
         self.ran = []
         self.present = {"git", "winget"}
+        self.winget_hangs = False
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -394,8 +395,11 @@ class SetupTest(unittest.TestCase):
         present = self.present if present is None else present
         answers, hidden = iter(answers), iter(answers_hidden)
 
-        def run(cmd, cwd=None, capture_output=False):
+        def run(cmd, cwd=None, capture_output=False, timeout=None):
             self.ran.append(cmd)
+            if cmd[0] == "winget" and self.winget_hangs:
+                assert timeout, "winget must never be waited on for ever"
+                raise subprocess.TimeoutExpired(cmd, timeout)
             if cmd[:2] == ["git", "clone"]:
                 (launcher.visionclaw / "gateway").mkdir(parents=True)
             if cmd[1:3] == ["install"] and cmd[0] == "npm":
@@ -456,12 +460,24 @@ class SetupTest(unittest.TestCase):
         # a code was made for the user, because they pressed Enter
         self.assertRegex(first_env, r"GATEWAY_TOKENS=[0-9a-f]{16}:me")
 
+    def test_a_winget_that_hangs_is_stopped_and_the_website_is_named(self):
+        self.winget_hangs = True
+        launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
+                            say=self.said.append)
+        code = self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""])
+        self.assertEqual(code, 1)
+        text = "\n".join(self.said)
+        self.assertIn("winget didn't finish in 10 minutes, so I stopped it", text)
+        self.assertIn("Node.js didn't install: download it from https://nodejs.org", text)
+        self.assertIn("Tailscale didn't install: download it from https://tailscale.com/download/windows", text)
+        self.assertTrue(all("--source" in c and "winget" in c for c in self.ran if c[0] == "winget"))
+
     def test_a_pc_without_winget_is_told_what_to_install(self):
         launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
                             say=self.said.append)
         self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""], present={"git"})
         self.assertFalse(any(c[0] == "winget" for c in self.ran))
-        self.assertTrue(any("Node.js isn't installed" in s for s in self.said))
+        self.assertTrue(any("Node.js isn't installed: download it from https://nodejs.org" in s for s in self.said))
 
 
 class CliTest(unittest.TestCase):

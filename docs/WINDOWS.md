@@ -27,14 +27,20 @@ pasting it and pressing Enter.
 
 **1. Python and Git**
 
-```powershell
-winget install --id Python.Python.3.12 -e
-winget install --id Git.Git -e
-```
+Use the websites; they're the most reliable. (`winget`, Windows' built-in installer, hangs on some PCs.)
 
-If it says `winget` isn't recognized, install **App Installer** from the Microsoft Store and try
-again. Say yes (`Y`) if it asks about agreements. When both finish, **close PowerShell and open a new
-one** so Windows notices them.
+- **Git:** go to **git-scm.com/download/win**, click **Click here to download**, open the file, click
+  **Next** on every screen, then **Install** and **Finish**.
+- **Python:** go to **python.org/downloads/release/python-31210/** (Python 3.12.10), scroll down to
+  *Files*, and click **Windows installer (64-bit)**. Open it, and **tick "Add python.exe to PATH"** at
+  the bottom of the first screen before you click **Install Now**.
+
+  Don't use the big yellow button on python.org's front page: it now gives a newer "Python Install
+  Manager", which can get stuck on "Getting the system ready for install...". If Python 3.12.10 has no
+  Windows installer, use Python 3.13 the same way (python.org/downloads, find *Python 3.13.x*, take its
+  *Windows installer (64-bit)*).
+
+Then open a **new** PowerShell and check both: `py --version` and `git --version`.
 
 **2. Claude Code**
 
@@ -59,7 +65,8 @@ cd claude-glasses-bridge
 py glasses.py setup
 ```
 
-It installs Node.js and Tailscale if they're missing (Windows asks for permission; click Yes),
+It installs Node.js and Tailscale if they're missing (it tries `winget`, gives up after 10 minutes if
+that hangs, and then names the website to use instead; Windows asks for permission; click Yes),
 downloads VisionClaw, installs everything, and asks for your LiveKit details:
 
 - On **cloud.livekit.io**, open your project, then **Settings → API Keys → Create key** (name it
@@ -172,7 +179,8 @@ reach the PC, and runs a short live test. Anything wrong gets a ✗ and the fix.
 
 - **`py` isn't recognized:** close and reopen PowerShell. If it still isn't, use `python` instead of
   `py`.
-- **`winget` isn't recognized:** install *App Installer* from the Microsoft Store.
+- **`winget` hangs or isn't recognized:** skip it and use the websites. `glasses setup` tells you which
+  ones (Node.js from nodejs.org, Tailscale from tailscale.com/download/windows).
 - **Claude Code can't find Git Bash:** install Git (`winget install --id Git.Git -e`), then open a
   new PowerShell window.
 - **The phone says it can't connect:** `glasses doctor`. The "phone can reach this PC" line says
