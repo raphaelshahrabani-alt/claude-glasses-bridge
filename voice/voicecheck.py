@@ -138,9 +138,11 @@ def check(key: str, voice: str = DEFAULT_VOICE, model: str = DEFAULT_MODEL,
                 response.read(64)
             return {"ok": True, "note": f"ElevenLabs accepts the key, but {refused}; a real call is the real test"}
         except urllib.error.HTTPError as p:
-            if p.code == 401 and _reply(p)[0] in ("", "invalid_api_key"):
+            p_status, p_message = _reply(p)
+            if p.code == 401 and p_status in ("", "invalid_api_key"):
                 problem, fix = FIXES["invalid_api_key"]
-                return {"ok": False, "status": "invalid_api_key", "problem": problem, "fix": fix}
+                return {"ok": False, "status": "invalid_api_key", "problem": problem, "fix": fix,
+                        "message": (p_message or message)[:300]}
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
         return {"ok": False, "status": "unchecked", "problem": f"ElevenLabs answered unexpectedly: {refused}",

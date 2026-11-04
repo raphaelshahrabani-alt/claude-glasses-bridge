@@ -86,6 +86,18 @@ def read_secret(prompt: str, getch: Callable[[], str] | None = None,
     return "".join(chars)
 
 
+def key_shape_note(name: str, value: str) -> str | None:
+    """A hint when a key is not the shape the service's keys have, which usually means part of it was not copied.
+    Only a hint: shown, never used to refuse a key."""
+    if name not in ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"):
+        return None
+    if re.fullmatch(r"sk_[0-9a-f]{48}", value):
+        return None
+    return (f"(Note: the key you pasted is {len(value)} characters and starts with {value[:3]!r}. ElevenLabs keys are "
+            "usually 51 characters starting with 'sk_'. If yours is shorter, or it has dots in it, the whole key wasn't "
+            "copied: use the Copy button in the box that appears when you create the key.)")
+
+
 def save(name: str, ask: Callable[[str], str] = read_secret, data_dir: Path | None = None,
          check_eleven: Callable[[str], dict[str, Any]] | None = None,
          check_deepgram: Callable[[str], dict[str, Any]] | None = None) -> int:
@@ -113,6 +125,9 @@ def save(name: str, ask: Callable[[str], str] = read_secret, data_dir: Path | No
     if service is None:
         print("Restart the glasses (glasses stop, then glasses start) to use it.")
         return 0
+    shape = key_shape_note(name, value)
+    if shape:
+        print(shape)
     print(f"Checking it with {service}...")
     if service == "Deepgram":
         result = (check_deepgram or voicecheck.check_deepgram)(value)
@@ -129,6 +144,8 @@ def save(name: str, ask: Callable[[str], str] = read_secret, data_dir: Path | No
         else:
             file.write_text(before, encoding="utf-8")
         print(f"✗ {service} says this key isn't valid, so I did not keep it.", file=sys.stderr)
+        if result.get("message"):
+            print(f"  {service} said: {result['message']}", file=sys.stderr)
         if service == "Deepgram":
             print("  On console.deepgram.com open API Keys, create a new key, and copy it right away.", file=sys.stderr)
         else:

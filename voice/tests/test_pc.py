@@ -124,6 +124,17 @@ class KeysTest(unittest.TestCase):
         self.assertIn("Couldn't check it with Deepgram", self.out.getvalue())
         self.assertNotIn("itself is fine", self.err.getvalue())
 
+    def test_an_invalid_key_shows_what_elevenlabs_said_and_the_shape_of_what_was_pasted(self):
+        masked = "sk_ac7f1234abcd...b5bf5678"  # the shortened form some key lists show
+        code = self.save("ELEVEN_API_KEY", masked, check_eleven=lambda k: {
+            "ok": False, "status": "invalid_api_key", "message": "Invalid API key"})
+        self.assertEqual(code, 1)
+        self.assertIn(f"is {len(masked)} characters and starts with 'sk_'", self.out.getvalue())
+        self.assertIn("Copy button", self.out.getvalue())
+        self.assertIn("ElevenLabs said: Invalid API key", self.err.getvalue())
+        self.assertEqual(keys.key_shape_note("ELEVEN_API_KEY", "sk_" + "ab01" * 12), None)  # the right shape: no note
+        self.assertIsNone(keys.key_shape_note("DEEPGRAM_API_KEY", "short"))  # only ElevenLabs' shape is known
+
     def test_a_stray_ctrl_v_does_not_spoil_the_key(self):
         # what getpass stored on Windows: the key followed by the Ctrl+V character, shown as a flat bar
         key = "sk_" + "0123456789abcdef" * 3

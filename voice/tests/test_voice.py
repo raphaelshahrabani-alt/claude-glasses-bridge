@@ -95,7 +95,9 @@ class VoiceCheckTest(unittest.TestCase):
         def opener(request, timeout=0):
             raise http_error(401 if request.full_url.endswith("/models") else 400, {"detail": "nope"})
 
-        self.assertEqual(voicecheck.check("k", opener=opener)["status"], "invalid_api_key")
+        result = voicecheck.check("k", opener=opener)
+        self.assertEqual(result["status"], "invalid_api_key")
+        self.assertEqual(result["message"], "nope")  # ElevenLabs' own words come along
 
     def test_when_nothing_can_be_told_it_says_unchecked_not_fine(self):
         def opener(request, timeout=0):
