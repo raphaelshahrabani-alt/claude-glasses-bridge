@@ -124,10 +124,19 @@ class KeysTest(unittest.TestCase):
         self.assertIn("Couldn't check it with Deepgram", self.out.getvalue())
         self.assertNotIn("itself is fine", self.err.getvalue())
 
+    def test_a_stray_ctrl_v_does_not_spoil_the_key(self):
+        # what getpass stored on Windows: the key followed by the Ctrl+V character, shown as a flat bar
+        key = "sk_" + "0123456789abcdef" * 3
+        code = self.save("ELEVEN_API_KEY", key + "\x16", check_eleven=lambda k: {"ok": True} if k == key else {
+            "ok": False, "status": "invalid_api_key"})
+        self.assertEqual(code, 0)
+        self.assertEqual(self.env(), f"ELEVEN_API_KEY={key}\n")
+
     def test_a_paste_that_went_wrong_is_not_saved_as_a_key(self):
         (self.dir / "voice.env").write_text("ELEVEN_API_KEY=" + "x" * 40 + "\n")
-        for junk in ("=", "-", "abc", "sk_short", "\x16"):
+        for junk in ("=", "-", "abc", "sk_short"):
             self.assertEqual(self.save("ELEVEN_API_KEY", junk), 1, junk)
+        self.assertEqual(self.save("ELEVEN_API_KEY", "\x16"), 1)  # only the Ctrl+V character: nothing was pasted
         self.assertEqual(self.env(), "ELEVEN_API_KEY=" + "x" * 40 + "\n")  # the good key is still there
         self.assertIn("doesn't look like a key", self.err.getvalue())
         self.assertEqual(self.save("GLASSES_THING", "short"), 0)  # only keys are held to this
@@ -137,6 +146,33 @@ class KeysTest(unittest.TestCase):
         self.assertEqual(self.env(), "GLASSES_THING=v\n")
         self.assertEqual(self.save("ELEVEN_API_KEY", "   "), 1)
         self.assertEqual(self.save("bad name", "v"), 1)
+
+
+class ReadSecretTest(unittest.TestCase):
+    def read(self, typed, clipboard=""):
+        keys_iter = iter(typed)
+        shown = []
+        value = keys.read_secret("Paste: ", getch=lambda: next(keys_iter), clipboard=lambda: clipboard, write=shown.append)
+        return value, "".join(shown)
+
+    def test_typed_and_right_click_pasted_characters(self):
+        value, shown = self.read(list("abc123") + ["\r"])
+        self.assertEqual(value, "abc123")
+        self.assertEqual(shown, "Paste: \n")  # nothing of the key is echoed
+
+    def test_ctrl_v_pastes_the_clipboard(self):
+        self.assertEqual(self.read(["\x16", "\r"], clipboard="sk_from_clipboard")[0], "sk_from_clipboard")
+        # even when it is pressed twice or after something was typed
+        self.assertEqual(self.read(["a", "\x16", "\x16", "\r"], clipboard="XY")[0], "aXYXY")
+
+    def test_backspace_arrow_keys_and_ctrl_c(self):
+        self.assertEqual(self.read(["a", "b", "\b", "c", "\r"])[0], "ac")
+        self.assertEqual(self.read(["a", "\xe0", "H", "b", "\r"])[0], "ab")  # an arrow key is two characters; both ignored
+        with self.assertRaises(KeyboardInterrupt):
+            self.read(["a", "\x03"])
+
+    def test_line_breaks_in_a_pasted_clipboard_do_not_end_up_in_the_key(self):
+        self.assertEqual(keys.clean("sk_abc\r\n  def\x16"), "sk_abcdef")
 
 
 class LauncherTest(unittest.TestCase):

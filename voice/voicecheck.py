@@ -74,10 +74,15 @@ def check_deepgram(key: str, opener: Callable[..., Any] = urllib.request.urlopen
             response.read(64)
         return {"ok": True}
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
+        if e.code == 401:
             return {"ok": False, "status": "invalid_api_key", "problem": "Deepgram says the key isn't valid",
                     "fix": "create a new key on console.deepgram.com (API Keys) and run: "
                            "~/claude-glasses-bridge/bin/glasses-key DEEPGRAM_API_KEY"}
+        if e.code == 403:
+            # a real key that isn't allowed to list projects: fine for hearing, so don't call it wrong
+            return {"ok": False, "status": "unchecked",
+                    "problem": "Deepgram accepts the key but it isn't allowed to list projects, which hearing doesn't need",
+                    "fix": "a real call is the real test"}
         if e.code == 402:
             return {"ok": False, "status": "payment_required", "problem": "the Deepgram account is out of credit",
                     "fix": "add credit on console.deepgram.com"}

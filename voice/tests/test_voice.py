@@ -130,10 +130,13 @@ class VoiceCheckTest(unittest.TestCase):
 
         voicecheck.check_deepgram("dg_key", opener=opener)
         self.assertEqual(seen["auth"], "Token dg_key")
-        for code in (401, 403):
-            result = voicecheck.check_deepgram("bad", opener=opener_raising(http_error(code, {})))
-            self.assertEqual(result["status"], "invalid_api_key")
-            self.assertIn("glasses-key DEEPGRAM_API_KEY", result["fix"])
+        result = voicecheck.check_deepgram("bad", opener=opener_raising(http_error(401, {})))
+        self.assertEqual(result["status"], "invalid_api_key")
+        self.assertIn("glasses-key DEEPGRAM_API_KEY", result["fix"])
+        # a key that may not list projects is not a wrong key
+        forbidden = voicecheck.check_deepgram("k", opener=opener_raising(http_error(403, {})))
+        self.assertEqual(forbidden["status"], "unchecked")
+        self.assertIn("accepts the key", forbidden["problem"])
         self.assertEqual(voicecheck.check_deepgram("k", opener=opener_raising(http_error(402, {})))["status"], "payment_required")
         # a page that moved says nothing about the key: never call the key invalid because of it
         self.assertEqual(voicecheck.check_deepgram("k", opener=opener_raising(http_error(404, {})))["status"], "unchecked")

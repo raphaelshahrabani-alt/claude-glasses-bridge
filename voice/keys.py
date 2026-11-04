@@ -20,23 +20,89 @@ import voicecheck  # noqa: E402
 DATA_DIR = Path(os.environ.get("GLASSES_DATA_DIR", Path.home() / ".claude-glasses-bridge")).expanduser()
 
 
-def save(name: str, ask: Callable[[str], str] = getpass.getpass, data_dir: Path | None = None,
+def clean(text: str) -> str:
+    """What was pasted, without spaces, line breaks or stray control characters (Ctrl+V can leave one)."""
+    return "".join(ch for ch in text if ch.isprintable() and not ch.isspace())
+
+
+def windows_clipboard() -> str:
+    """The text on the Windows clipboard, or "" if it can't be read."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32  # type: ignore[attr-defined]
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = wintypes.HANDLE
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        if not user32.OpenClipboard(None):
+            return ""
+        try:
+            handle = user32.GetClipboardData(13)  # CF_UNICODETEXT
+            pointer = kernel32.GlobalLock(handle) if handle else None
+            if not pointer:
+                return ""
+            try:
+                return ctypes.wstring_at(pointer)
+            finally:
+                kernel32.GlobalUnlock(handle)
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return ""
+
+
+def read_secret(prompt: str, getch: Callable[[], str] | None = None,
+                clipboard: Callable[[], str] = windows_clipboard, write: Callable[[str], object] | None = None) -> str:
+    """Hidden input. On Windows, getpass stores Ctrl+V as a control character instead of pasting, so read the
+    keys ourselves: Ctrl+V pastes from the clipboard, and right-click paste works too."""
+    if getch is None:
+        if os.name != "nt":
+            return getpass.getpass(prompt)
+        import msvcrt
+
+        getch = msvcrt.getwch  # type: ignore[attr-defined]
+    out = write or (lambda text: (sys.stdout.write(text), sys.stdout.flush()))
+    out(prompt)
+    chars: list[str] = []
+    while True:
+        ch = getch()
+        if ch in ("\r", "\n"):
+            break
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch in ("\b", "\x7f"):
+            if chars:
+                chars.pop()
+        elif ch == "\x16":  # Ctrl+V
+            chars.extend(clipboard())
+        elif ch in ("\x00", "\xe0"):  # the first half of an arrow or function key
+            getch()
+        elif ch.isprintable():
+            chars.append(ch)
+    out("\n")
+    return "".join(chars)
+
+
+def save(name: str, ask: Callable[[str], str] = read_secret, data_dir: Path | None = None,
          check_eleven: Callable[[str], dict[str, Any]] | None = None,
          check_deepgram: Callable[[str], dict[str, Any]] | None = None) -> int:
     data_dir = data_dir or DATA_DIR
     if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name or ""):
         print("usage: glasses key NAME   (for example: glasses key ELEVEN_API_KEY)", file=sys.stderr)
         return 1
-    value = "".join((ask(f"Paste your {name} and press Enter: ") or "").split())
+    value = clean(ask(f"Paste your {name} and press Enter: ") or "")
     if not value:
-        print("Nothing was pasted, so nothing changed.", file=sys.stderr)
+        print("Nothing was pasted, so nothing changed. Copy the key again, then paste it here "
+              "(Ctrl+V or right-click) and press Enter.", file=sys.stderr)
         return 1
-    if name.endswith("_KEY") and (len(value) < 16 or not value.isprintable()):
-        # real keys are 40 characters or more; a paste that went wrong is often one odd character
+    if name.endswith("_KEY") and len(value) < 16:
+        # real keys are 40 characters or more
         print(f"That doesn't look like a key ({len(value)} character{'' if len(value) == 1 else 's'}; real ones are much "
               "longer). Nothing was saved.", file=sys.stderr)
-        print("  Copy the key again, wait for the 'Paste your ...' line, then right-click in this window to paste.",
-              file=sys.stderr)
+        print("  Copy the whole key again, then paste it here (Ctrl+V or right-click) and press Enter.", file=sys.stderr)
         return 1
     file = data_dir / "voice.env"
     before = file.read_text(encoding="utf-8") if file.exists() else None
