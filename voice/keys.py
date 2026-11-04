@@ -8,6 +8,7 @@ from __future__ import annotations
 import getpass
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -25,8 +26,7 @@ def clean(text: str) -> str:
     return "".join(ch for ch in text if ch.isprintable() and not ch.isspace())
 
 
-def windows_clipboard() -> str:
-    """The text on the Windows clipboard, or "" if it can't be read."""
+def _clipboard_ctypes() -> str:
     try:
         import ctypes
         from ctypes import wintypes
@@ -54,36 +54,70 @@ def windows_clipboard() -> str:
         return ""
 
 
+def _clipboard_powershell() -> str:
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Clipboard"], capture_output=True, text=True,
+                             timeout=15)
+        return out.stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def windows_clipboard() -> str:
+    """The text on the Windows clipboard: read directly, or if that gives nothing, through PowerShell."""
+    return _clipboard_ctypes() or _clipboard_powershell()
+
+
+# What the last read_secret received, so a failed paste can say which way it failed.
+last_read: dict[str, int] = {"typed": 0, "ctrl_v": 0, "pasted": 0}
+
+
 def read_secret(prompt: str, getch: Callable[[], str] | None = None,
-                clipboard: Callable[[], str] = windows_clipboard, write: Callable[[str], object] | None = None) -> str:
+                clipboard: Callable[[], str] | None = None, write: Callable[[str], object] | None = None) -> str:
     """Hidden input. On Windows, getpass stores Ctrl+V as a control character instead of pasting, so read the
-    keys ourselves: Ctrl+V pastes from the clipboard, and right-click paste works too."""
+    keys ourselves: Ctrl+V pastes from the clipboard, and right-click paste works too. A line break before
+    anything has been typed is ignored, so a paste that starts with one isn't taken for an empty answer."""
     if getch is None:
         if os.name != "nt":
             return getpass.getpass(prompt)
         import msvcrt
 
         getch = msvcrt.getwch  # type: ignore[attr-defined]
+    clipboard = clipboard or windows_clipboard
     out = write or (lambda text: (sys.stdout.write(text), sys.stdout.flush()))
     out(prompt)
+    last_read.update(typed=0, ctrl_v=0, pasted=0)
     chars: list[str] = []
     while True:
         ch = getch()
         if ch in ("\r", "\n"):
-            break
+            if chars:
+                break
+            continue
         if ch == "\x03":
             raise KeyboardInterrupt
         if ch in ("\b", "\x7f"):
             if chars:
                 chars.pop()
         elif ch == "\x16":  # Ctrl+V
-            chars.extend(clipboard())
+            text = clipboard() or ""
+            last_read["ctrl_v"] += 1
+            last_read["pasted"] += len(clean(text))
+            chars.extend(text)
         elif ch in ("\x00", "\xe0"):  # the first half of an arrow or function key
             getch()
         elif ch.isprintable():
+            last_read["typed"] += 1
             chars.append(ch)
     out("\n")
     return "".join(chars)
+
+
+def what_arrived() -> str:
+    """A plain-words line for a paste that came to nothing."""
+    r = last_read
+    return (f"(I received {r['typed']} typed or right-click-pasted characters; Ctrl+V was pressed {r['ctrl_v']} "
+            f"time{'' if r['ctrl_v'] == 1 else 's'} and gave {r['pasted']} characters from the clipboard.)")
 
 
 def key_shape_note(name: str, value: str) -> str | None:
@@ -105,7 +139,7 @@ def save(name: str, ask: Callable[[str], str] = read_secret, data_dir: Path | No
     if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name or ""):
         print("usage: glasses key NAME   (for example: glasses key ELEVEN_API_KEY)", file=sys.stderr)
         return 1
-    value = clean(ask(f"Paste your {name} and press Enter: ") or "")
+    value = clean(ask(f"Paste your {name} and press Enter (Ctrl+C to cancel): ") or "")
     if not value:
         print("Nothing was pasted, so nothing changed. Copy the key again, then paste it here "
               "(Ctrl+V or right-click) and press Enter.", file=sys.stderr)
@@ -114,6 +148,7 @@ def save(name: str, ask: Callable[[str], str] = read_secret, data_dir: Path | No
         # real keys are 40 characters or more
         print(f"That doesn't look like a key ({len(value)} character{'' if len(value) == 1 else 's'}; real ones are much "
               "longer). Nothing was saved.", file=sys.stderr)
+        print("  " + what_arrived(), file=sys.stderr)
         print("  Copy the whole key again, then paste it here (Ctrl+V or right-click) and press Enter.", file=sys.stderr)
         return 1
     file = data_dir / "voice.env"

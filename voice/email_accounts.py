@@ -539,10 +539,13 @@ def cli(argv: list[str], store: Store | None = None, mail: Mail | None = None,
         print(f"  Make one at: {known['help']}")
     import keys  # read_secret understands Ctrl+V on Windows, where getpass would store it as a stray character
 
-    password = keys.clean((ask or keys.read_secret)(f"App password for {address}: ") or "")
+    password = keys.clean((ask or keys.read_secret)(f"App password for {address} (Ctrl+C to cancel): ") or "")
     if len(password) < 8:
-        print("That doesn't look like an app password (they are 16 letters); nothing changed. Copy it again, then paste it "
-              "here (Ctrl+V or right-click) and press Enter.")
+        print(f"That doesn't look like an app password (they are 16 letters; I got {len(password)}); nothing changed.")
+        if ask is None:
+            print("  " + keys.what_arrived())
+        print("  Copy it again and paste it here (Ctrl+V or right-click), or just type the 16 letters by hand, "
+              "then press Enter.")
         return 1
     previous = store.password(address)
     where = store.set_password(address, password)

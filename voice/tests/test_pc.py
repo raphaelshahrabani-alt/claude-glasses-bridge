@@ -182,6 +182,28 @@ class ReadSecretTest(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             self.read(["a", "\x03"])
 
+    def test_a_line_break_before_anything_is_ignored_not_taken_for_an_empty_answer(self):
+        # a copied selection that starts with a line break, or Enter pressed before pasting
+        self.assertEqual(self.read(["\r", "\n", "a", "b", "\r"])[0], "ab")
+
+    def test_it_records_which_way_a_paste_failed(self):
+        self.read(["\x16", "a", "\r"], clipboard="")  # Ctrl+V gave nothing; one letter was typed
+        self.assertEqual(keys.last_read, {"typed": 1, "ctrl_v": 1, "pasted": 0})
+        self.assertIn("Ctrl+V was pressed 1 time and gave 0 characters", keys.what_arrived())
+        self.read(list("abc") + ["\r"])
+        self.assertEqual(keys.last_read, {"typed": 3, "ctrl_v": 0, "pasted": 0})
+
+    def test_the_clipboard_falls_back_to_powershell_when_reading_it_directly_fails(self):
+        real = keys._clipboard_ctypes, keys._clipboard_powershell
+        try:
+            keys._clipboard_ctypes = lambda: ""
+            keys._clipboard_powershell = lambda: "abcd efgh ijkl mnop\r\n"
+            self.assertEqual(keys.clean(keys.windows_clipboard()), "abcdefghijklmnop")
+            keys._clipboard_ctypes = lambda: "from-direct-read"
+            self.assertEqual(keys.windows_clipboard(), "from-direct-read")
+        finally:
+            keys._clipboard_ctypes, keys._clipboard_powershell = real
+
     def test_line_breaks_in_a_pasted_clipboard_do_not_end_up_in_the_key(self):
         self.assertEqual(keys.clean("sk_abc\r\n  def\x16"), "sk_abcdef")
 
