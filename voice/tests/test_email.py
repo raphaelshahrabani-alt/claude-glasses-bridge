@@ -251,6 +251,16 @@ class EmailCliTest(unittest.TestCase):
         self.assertEqual(self.store.password("Partner@Gmail.com"), "abcdefghijklmnop")
         self.assertEqual(oct(os.stat(self.store.secrets_file).st_mode & 0o777), "0o600")
 
+    def test_a_stray_ctrl_v_character_does_not_spoil_an_app_password(self):
+        self.assertEqual(self.run_cli("add", "me@gmail.com", password="abcd efgh ijkl mnop\x16"), 0)
+        self.assertEqual(self.store.password("me@gmail.com"), "abcdefghijklmnop")
+
+    def test_a_paste_that_went_wrong_is_not_saved_as_a_password(self):
+        for junk in ("", "\x16", "abc"):
+            self.assertEqual(self.run_cli("add", "me@gmail.com", password=junk), 1, repr(junk))
+        self.assertEqual(self.store.accounts(), [])
+        self.assertIsNone(self.store.password("me@gmail.com"))
+
     def test_a_password_that_does_not_log_in_is_not_kept(self):
         self.ok = False
         self.assertEqual(self.run_cli("add", "me@icloud.com"), 1)

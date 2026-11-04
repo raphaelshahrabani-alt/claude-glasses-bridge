@@ -471,7 +471,7 @@ def _host(value: str, default_port: int) -> tuple[str, int]:
 
 
 def cli(argv: list[str], store: Store | None = None, mail: Mail | None = None,
-        ask: Callable[[str], str] = lambda prompt: getpass.getpass(prompt)) -> int:
+        ask: Callable[[str], str] | None = None) -> int:
     store = store or Store()
     mail = mail or Mail(store)
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -537,9 +537,12 @@ def cli(argv: list[str], store: Store | None = None, mail: Mail | None = None,
     if known:
         print(f"{address}: {provider} account. Use an app password, not your normal password.")
         print(f"  Make one at: {known['help']}")
-    password = ask(f"App password for {address}: ").replace(" ", "")
-    if not password:
-        print("No password given; nothing changed.")
+    import keys  # read_secret understands Ctrl+V on Windows, where getpass would store it as a stray character
+
+    password = keys.clean((ask or keys.read_secret)(f"App password for {address}: ") or "")
+    if len(password) < 8:
+        print("That doesn't look like an app password (they are 16 letters); nothing changed. Copy it again, then paste it "
+              "here (Ctrl+V or right-click) and press Enter.")
         return 1
     previous = store.password(address)
     where = store.set_password(address, password)
