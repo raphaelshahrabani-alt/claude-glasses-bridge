@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib
 import io
 import json
 import logging
@@ -36,6 +37,15 @@ from livekit.agents import (  # noqa: E402
     cli,
     llm,
 )
+
+# LiveKit only lets plugins be loaded on the main thread, and on Windows every call runs in a thread. So load
+# them here, as the program starts, never when a call first needs one ("Plugins must be registered on the
+# main thread" ended every call on Windows the moment it began).
+for _plugin in ("deepgram", "elevenlabs"):
+    try:
+        importlib.import_module(f"livekit.plugins.{_plugin}")
+    except ImportError:
+        pass  # not installed: the call says so when it needs it
 
 from brain import Brain, BrainConfig  # noqa: E402
 from claude_lane import LaneConfig  # noqa: E402
@@ -193,7 +203,9 @@ def make_stt(terms: list[str]):
     if os.environ.get("DEEPGRAM_API_KEY"):
         from livekit.plugins import deepgram
 
-        return deepgram.STT(model="nova-3", language=language, keyterm=terms or None)
+        # Without a profile there are no names to listen for; passing None (rather than leaving it out) crashes.
+        extra = {"keyterm": terms} if terms else {}
+        return deepgram.STT(model="nova-3", language=language, **extra)
     return os.environ.get("GLASSES_STT", f"deepgram/nova-3:{language}")
 
 

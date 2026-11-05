@@ -128,3 +128,33 @@ class WorkerTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PluginsOnTheMainThreadTest(unittest.TestCase):
+    def test_voices_can_be_made_from_a_call_thread(self):
+        """Windows runs each call in a thread; LiveKit refuses to load a plugin there for the first time."""
+        import subprocess
+
+        voice = Path(__file__).resolve().parent.parent
+        code = f"""
+import os, sys, threading
+sys.path.insert(0, {str(voice)!r})
+os.environ["DEEPGRAM_API_KEY"] = "dg-not-a-real-key-0000000000"
+os.environ["ELEVEN_API_KEY"] = "sk_" + "0" * 48
+import worker
+errors = []
+def call():
+    try:
+        worker.make_stt([])  # no profile yet, so no names to listen for
+        worker.make_stt(["Acme"])
+        worker.make_tts()
+    except Exception as error:
+        errors.append(repr(error))
+thread = threading.Thread(target=call)
+thread.start()
+thread.join()
+print("ERRORS:", errors)
+"""
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                             env={**os.environ, "GLASSES_DATA_DIR": tempfile.mkdtemp()})
+        self.assertIn("ERRORS: []", out.stdout, out.stderr[-800:])
