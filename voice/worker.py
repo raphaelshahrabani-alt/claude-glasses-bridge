@@ -453,10 +453,19 @@ def keep_awake() -> None:
         return
     import ctypes
     import threading
+    from ctypes import wintypes
 
     def hold() -> None:
-        # The setting lasts as long as this thread does.
-        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)  # CONTINUOUS | SYSTEM_REQUIRED
+        # The setting lasts as long as this thread does. The flags are an unsigned number: say so, or
+        # ctypes refuses 0x80000001 as too big for a signed one and the PC would still go to sleep.
+        try:
+            function = ctypes.windll.kernel32.SetThreadExecutionState  # type: ignore[attr-defined]
+            function.argtypes = [wintypes.DWORD]
+            function.restype = wintypes.DWORD
+            function(0x80000000 | 0x00000001)  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+        except Exception:
+            log.exception("could not ask Windows to stay awake")
+            return
         threading.Event().wait()
 
     threading.Thread(target=hold, daemon=True, name="keep-awake").start()

@@ -220,7 +220,8 @@ class Launcher:
             if self.wait_for(lambda: self.port_open(GATEWAY_PORT), 40):
                 say("login service: started")
             else:
-                self.say(f"✗ the login service didn't start; look at the end of {self.log('gateway')}")
+                self.say(f"✗ the login service didn't start. The end of {self.log('gateway')}:")
+                self.say(self._tail(self.log("gateway"), 15))
                 code = 1
 
         if self.info("voice"):
@@ -235,7 +236,8 @@ class Launcher:
             if self.wait_for(lambda: self._registered(log, size), wait_s):
                 say(f"voice: started. Claude Code works in {project}")
             else:
-                self.say(f"✗ the voice program didn't finish starting; look at the end of {log}")
+                self.say(f"✗ the voice program didn't finish starting. The end of {log}:")
+                self.say(self._tail(log, 15))
                 code = 1
         if code == 0:
             say("Ready. Start a call from the phone.")
@@ -270,6 +272,15 @@ class Launcher:
         env = dict(self.base_env)
         env["PYTHONUTF8"] = "1"
         return env
+
+    @staticmethod
+    def _tail(log: Path, lines: int) -> str:
+        """The end of a log, indented, for showing when something didn't start."""
+        try:
+            text = log.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+        except OSError:
+            return "    (no log was written)"
+        return "\n".join("    " + line[:300] for line in text) or "    (the log is empty)"
 
     @staticmethod
     def _registered(log: Path, from_byte: int) -> bool:

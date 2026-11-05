@@ -299,8 +299,12 @@ class LauncherTest(unittest.TestCase):
         launcher.spawn = lambda cmd, cwd, env, log: os.getpid()
         launcher.port_open = lambda p: True
         self.said.clear()
+        launcher.log("voice").parent.mkdir(parents=True, exist_ok=True)
+        launcher.log("voice").write_text("starting\nTraceback (most recent call last):\nImportError: no module named x\n")
         self.assertEqual(launcher.start("C:/proj", wait_s=0.2), 1)
-        self.assertTrue(any("didn't finish starting" in s for s in self.said))
+        text = "\n".join(self.said)
+        self.assertIn("didn't finish starting", text)
+        self.assertIn("    ImportError: no module named x", text)  # the cause is shown, not just where to look
 
     def test_quiet_start_says_nothing_when_all_is_well(self):
         launcher = self.launcher()

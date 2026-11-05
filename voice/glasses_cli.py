@@ -23,7 +23,7 @@ USAGE = """glasses: your Meta glasses assistant, on this PC
   glasses email add you@example.com | list | remove you@example.com
   glasses pick-voice          hear the voices and pick one
   glasses profile             open your profile in Notepad
-  glasses logs [voice|gateway]  the end of a log
+  glasses logs [voice|console|gateway]  the end of a log (console shows start-up errors)
   glasses autostart on|off    start by itself when you sign in to Windows
 """
 
@@ -155,7 +155,9 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "logs":
         name = rest[0] if rest else "voice"
-        log = default_data_dir() / ("voice.log" if name == "voice" else f"{name}.log")
+        # voice: the voice program's own log; console: what it printed as it started, where start-up errors are
+        files = {"voice": "voice.log", "console": "voice-console.log", "gateway": "gateway.log"}
+        log = default_data_dir() / files.get(name, f"{name}.log")
         try:
             print("".join(log.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)[-40:]))
         except OSError:
