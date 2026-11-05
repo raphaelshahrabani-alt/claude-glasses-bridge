@@ -388,6 +388,15 @@ server = AgentServer(
 @server.rtc_session()
 async def entrypoint(ctx: JobContext) -> None:
     setup_logging()
+    try:
+        await run_call(ctx)
+    except Exception:
+        # LiveKit prints this to the console only; the call log is where people look.
+        log.exception("the call ended because of an error")
+        raise
+
+
+async def run_call(ctx: JobContext) -> None:
     await ctx.connect()
     persona = read_persona()
     name = first_name(persona)
