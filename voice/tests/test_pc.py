@@ -513,7 +513,10 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("Tailscale gets a security certificate", slow[1])  # says what the wait is for
         generic = why("https://pc.ts.net/health", opener=failing(urllib.error.URLError(ssl.SSLError(1, "TLSV1_ALERT_INTERNAL_ERROR"))))
         self.assertIn("the secure connection failed (TLSV1_ALERT_INTERNAL_ERROR)", generic[0])  # the real error is shown
-        untrusted = why("https://pc.ts.net/health", opener=failing(urllib.error.URLError(
+        expired = failing(urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed: certificate has expired")))
+        # Python can reject a chain that Windows accepts: if Windows' own tool gets through, it's fine
+        self.assertIsNone(why("https://pc.ts.net/health", opener=expired, system_check=lambda url: True))
+        untrusted = why("https://pc.ts.net/health", system_check=lambda url: False, opener=failing(urllib.error.URLError(
             ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate"))))
         self.assertIn("doesn't trust its certificate", untrusted[0])
         self.assertIn("Safari", untrusted[1])
@@ -525,6 +528,22 @@ class DoctorTest(unittest.TestCase):
         report = pcdoctor.Report()
         pcdoctor.check_phone(report, {"installed": True, "state": "Running", "dns": "", "https": None, "serving": True})
         self.assertIn("didn't give this PC a name yet", report.render())
+
+    def test_windows_own_web_tool_check(self):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="200", stderr="")
+
+        self.assertTrue(pcdoctor.windows_https_ok("https://pc.ts.net/health", run=run, which=lambda n: r"C:\Windows\System32\curl.exe"))
+        self.assertEqual(calls[0][0], r"C:\Windows\System32\curl.exe")
+        self.assertIn("https://pc.ts.net/health", calls[0])
+        self.assertFalse(pcdoctor.windows_https_ok("https://pc.ts.net/health", run=run, which=lambda n: None))
+        self.assertFalse(pcdoctor.windows_https_ok("https://pc.ts.net/health", which=lambda n: "curl",
+                                                   run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 60, stdout="000", stderr="x")))
+        self.assertFalse(pcdoctor.windows_https_ok("https://pc.ts.net/health", which=lambda n: "curl",
+                                                   run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="502", stderr="")))
 
     def test_credits_out_until_a_deepgram_key_is_added(self):
         self.launcher.remember("voice", os.getpid())

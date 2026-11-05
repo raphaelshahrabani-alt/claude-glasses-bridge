@@ -140,8 +140,24 @@ PHONE_WAIT_S = 30.0  # the first request makes Tailscale fetch a security certif
 DNS_PAGE = "login.tailscale.com/admin/dns"
 
 
+def windows_https_ok(url: str, timeout: float = PHONE_WAIT_S, run: Callable[..., Any] = subprocess.run,
+                     which: Callable[[str], str | None] = shutil.which) -> bool:
+    """Asks Windows' own web tool (curl.exe, which trusts what Windows trusts) whether the address answers.
+    Python's checker can reject a certificate chain that Windows, and the phone, accept."""
+    curl = which("curl.exe") or which("curl")
+    if not curl:
+        return False
+    try:
+        result = run([curl, "-sS", "-m", str(int(timeout)), "-o", os.devnull, "-w", "%{http_code}", url],
+                     capture_output=True, text=True, timeout=timeout + 5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and (result.stdout or "").strip().startswith("2")
+
+
 def why_unreachable(url: str, timeout: float = PHONE_WAIT_S,
-                    opener: Callable[..., Any] = urllib.request.urlopen) -> tuple[str, str] | None:
+                    opener: Callable[..., Any] = urllib.request.urlopen,
+                    system_check: Callable[[str], bool] = windows_https_ok) -> tuple[str, str] | None:
     """None if the address answers. Otherwise (what happened, what to do), in plain words."""
     try:
         with opener(url, timeout=timeout) as response:
@@ -162,6 +178,8 @@ def why_unreachable(url: str, timeout: float = PHONE_WAIT_S,
             return ("this PC can't look up that name",
                     f"open {DNS_PAGE}, check MagicDNS is on, and in the Tailscale menu make sure Use Tailscale DNS settings is ticked")
         if isinstance(reason, ssl.SSLCertVerificationError) or "certificate verify failed" in low:
+            if system_check(url):  # Windows trusts it, so the phone will too
+                return None
             return (f"this PC's own check doesn't trust its certificate ({text})",
                     "that may only be this check; open the address with /health on the end in Safari on the iPhone, "
                     "and if that shows ok the phone is fine")
