@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 import envfile  # noqa: E402
+import folders  # noqa: E402
 import glasses_cli  # noqa: E402
 import keys  # noqa: E402
 import launcher as launcher_mod  # noqa: E402
@@ -218,6 +219,9 @@ class LauncherTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.said = []
         self.started = []
+        self.proj, self.extra = str(self.root / "proj"), str(self.root / "extra")
+        (self.root / "proj").mkdir()
+        (self.root / "extra").mkdir()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -262,21 +266,21 @@ class LauncherTest(unittest.TestCase):
 
     def test_start_runs_the_login_service_then_the_voice(self):
         launcher = self.launcher()
-        self.assertEqual(launcher.start("C:/proj", ["C:/extra"]), 0)
+        self.assertEqual(launcher.start(self.proj, [self.extra]), 0)
         gateway, voice = self.started
         self.assertEqual(gateway[0][-1], "start")
         self.assertEqual(gateway[1], launcher.visionclaw / "gateway")
         self.assertEqual(voice[0][0], str(venv_python(launcher.data_dir)))
         self.assertTrue(voice[0][1].endswith("worker.py"))
-        self.assertEqual(voice[2]["GLASSES_PROJECT"], "C:/proj")
+        self.assertEqual(voice[2]["GLASSES_PROJECT"], self.proj)
         self.assertEqual(voice[2]["KEEP"], "env")
         self.assertIn("Ready.", self.said[-1])
         # and what it did is remembered for next time
-        self.assertEqual(json.loads((launcher.data_dir / "launch.json").read_text()), {"project": "C:/proj", "extra_dirs": ["C:/extra"]})
+        self.assertEqual(json.loads((launcher.data_dir / "launch.json").read_text()), {"project": self.proj, "extra_dirs": [self.extra]})
 
     def test_start_again_leaves_running_things_alone_and_reuses_the_folders(self):
         launcher = self.launcher()
-        launcher.start("C:/proj", ["C:/extra"])
+        launcher.start(self.proj, [self.extra])
         self.started.clear()
         self.assertEqual(launcher.start(), 0)
         self.assertEqual(self.started, [])
@@ -285,13 +289,13 @@ class LauncherTest(unittest.TestCase):
 
     def test_a_dead_voice_program_is_restarted(self):
         launcher = self.launcher()
-        launcher.start("C:/proj")
+        launcher.start(self.proj)
         launcher.pid_file("voice").write_text(json.dumps({"pid": 2 ** 22 + 12345, "started": 0}))  # not running
         self.started.clear()
         self.assertEqual(launcher.start(), 0)
         self.assertEqual(len(self.started), 1)
         self.assertEqual(self.started[0][3], launcher.log("voice"))
-        self.assertEqual(self.started[0][2]["GLASSES_PROJECT"], "C:/proj")  # the folder it had before
+        self.assertEqual(self.started[0][2]["GLASSES_PROJECT"], self.proj)  # the folder it had before
 
     def test_start_says_when_setup_is_missing_or_the_voice_never_comes_up(self):
         data, vc = make_install(self.root / "none", livekit=False)
@@ -305,7 +309,7 @@ class LauncherTest(unittest.TestCase):
         self.said.clear()
         launcher.log("voice").parent.mkdir(parents=True, exist_ok=True)
         launcher.log("voice").write_text("starting\nTraceback (most recent call last):\nImportError: no module named x\n")
-        self.assertEqual(launcher.start("C:/proj", wait_s=0.2), 1)
+        self.assertEqual(launcher.start(self.proj, wait_s=0.2), 1)
         text = "\n".join(self.said)
         self.assertIn("didn't finish starting", text)
         self.assertIn("    ImportError: no module named x", text)  # the cause is shown, not just where to look
@@ -344,14 +348,14 @@ class LauncherTest(unittest.TestCase):
             log.write_text("failed to connect to livekit, retrying: 401 Unauthorized\nThe HMAC key is 1 bytes long\n"),
             os.getpid())[-1]
         launcher.port_open = lambda p: True
-        self.assertEqual(launcher.start("C:/proj", wait_s=0.2), 1)
+        self.assertEqual(launcher.start(self.proj, wait_s=0.2), 1)
         text = "\n".join(self.said)
         self.assertIn("didn't finish starting", text)
         self.assertIn("→ LiveKit refused the keys (error 401)", text)
 
     def test_quiet_start_says_nothing_when_all_is_well(self):
         launcher = self.launcher()
-        self.assertEqual(launcher.start("C:/proj", quiet=True), 0)
+        self.assertEqual(launcher.start(self.proj, quiet=True), 0)
         self.assertEqual(self.said, [])
 
     def test_stop_ends_what_was_started(self):
@@ -453,6 +457,15 @@ class DoctorTest(unittest.TestCase):
         out = self.run_check(quick=True)
         self.assertIn("✗ the voice program's last start failed: LiveKit refused the keys (error 401)", out)
         self.assertIn("run: glasses livekit", out)
+
+    def test_a_missing_work_folder_is_flagged(self):
+        self.launcher.remember("voice", os.getpid())
+        (self.data / "launch.json").write_text(json.dumps({"project": str(self.root / "Desktop"), "extra_dirs": []}))
+        out = self.run_check(quick=True)
+        self.assertIn("✗ the folder Claude Code works in doesn't exist", out)
+        self.assertIn("glasses start $HOME\\Documents", out)
+        (self.root / "Desktop").mkdir()
+        self.assertNotIn("doesn't exist", self.run_check(quick=True))
 
     def test_a_stale_voice_program(self):
         self.launcher.pid_file("voice").parent.mkdir(parents=True, exist_ok=True)
@@ -673,6 +686,73 @@ class SetupTest(unittest.TestCase):
         self.setup_run(launcher, ["wss://p.livekit.cloud", FAKE_KEY, ""], present={"git"})
         self.assertFalse(any(c[0] == "winget" for c in self.ran))
         self.assertTrue(any("Node.js isn't installed: download it from https://nodejs.org" in s for s in self.said))
+
+
+class FoldersTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name) / "home"
+        self.home.mkdir()
+        self.said = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_folder_that_exists_is_used_as_it_is(self):
+        (self.home / "Desktop").mkdir()
+        self.assertEqual(folders.real_folder(self.home / "Desktop", env={}, home=self.home), str(self.home / "Desktop"))
+
+    def test_a_desktop_kept_in_onedrive_is_found(self):
+        (self.home / "OneDrive" / "Desktop").mkdir(parents=True)
+        self.assertEqual(folders.real_folder(self.home / "Desktop", env={}, home=self.home),
+                         str(self.home / "OneDrive" / "Desktop"))
+        other = Path(self.tmp.name) / "Work OneDrive"
+        (other / "Documents").mkdir(parents=True)
+        self.assertEqual(folders.real_folder(self.home / "Documents", env={"OneDriveCommercial": str(other)}, home=self.home),
+                         str(other / "Documents"))
+
+    def test_a_folder_that_is_nowhere_is_none(self):
+        self.assertIsNone(folders.real_folder(self.home / "Desktop", env={}, home=self.home))
+        self.assertIsNone(folders.real_folder(self.home / "Projects", env={}, home=self.home))
+
+    def test_a_missing_main_folder_falls_back_to_home_and_says_so(self):
+        main, extra = folders.work_folders(str(self.home / "Desktop"), [str(self.home / "Downloads")], self.said.append,
+                                           env={}, home=self.home)
+        self.assertEqual((main, extra), (str(self.home), []))
+        text = "\n".join(self.said)
+        self.assertIn("doesn't exist, so Claude Code will work in", text)
+        self.assertIn("Skipping", text)
+
+    def test_onedrive_folders_are_swapped_in_with_a_note(self):
+        (self.home / "OneDrive" / "Desktop").mkdir(parents=True)
+        (self.home / "Downloads").mkdir()
+        main, extra = folders.work_folders(str(self.home / "Desktop"), [str(self.home / "Downloads"), str(self.home / "Downloads")],
+                                           self.said.append, env={}, home=self.home)
+        self.assertEqual(main, str(self.home / "OneDrive" / "Desktop"))
+        self.assertEqual(extra, [str(self.home / "Downloads")])  # once
+        self.assertTrue(any("so I'm using that" in s for s in self.said))
+
+    def test_start_uses_the_real_folder_and_remembers_it(self):
+        data, vc = make_install(Path(self.tmp.name) / "inst")
+        started = []
+        launcher = Launcher(data_dir=data, visionclaw=vc, root=HERE.parent.parent, base_env={"PATH": "x"},
+                            say=self.said.append, spawn=lambda cmd, cwd, env, log: (started.append(dict(env)), os.getpid())[1],
+                            port_open=lambda p: True, sleep=lambda s: None)
+        launcher.start(str(self.home / "nowhere"), wait_s=0.1)
+        self.assertNotEqual(started[0]["GLASSES_PROJECT"], str(self.home / "nowhere"))
+        self.assertTrue(os.path.isdir(started[0]["GLASSES_PROJECT"]))
+        self.assertTrue(any("doesn't exist" in s for s in self.said))
+
+
+class LaneFolderTest(unittest.IsolatedAsyncioTestCase):
+    async def test_a_missing_folder_is_named_not_reported_as_a_bad_directory_name(self):
+        import claude_lane
+
+        lane = claude_lane.Lane(claude_lane.LaneConfig(cwd=str(Path(tempfile.gettempdir()) / "no-such-folder-xyz"),
+                                                       claude="claude"), name="work")
+        with self.assertRaises(FileNotFoundError) as caught:
+            await lane.start()
+        self.assertIn("the folder Claude Code should work in doesn't exist", str(caught.exception))
 
 
 class LiveKitTest(unittest.TestCase):

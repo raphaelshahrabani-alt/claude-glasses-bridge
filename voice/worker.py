@@ -39,6 +39,7 @@ from livekit.agents import (  # noqa: E402
 
 from brain import Brain, BrainConfig  # noqa: E402
 from claude_lane import LaneConfig  # noqa: E402
+from folders import real_folder  # noqa: E402
 
 log = logging.getLogger("glasses.voice")
 
@@ -69,7 +70,8 @@ def setup_logging() -> None:
 
 def env_dirs(name: str) -> list[str]:
     raw = os.environ.get(name, "")
-    return [str(Path(p).expanduser()) for p in raw.split(os.pathsep) if p.strip()]
+    found = [real_folder(p) for p in raw.split(os.pathsep) if p.strip()]
+    return [f for f in found if f]  # a folder that isn't there would only upset Claude Code
 
 
 def persona_path() -> Path:
@@ -145,7 +147,7 @@ def setting(*names: str, default: str) -> str | None:
 def brain_config(persona: str) -> BrainConfig:
     home = Path.home()
     default_project = home / "Desktop" if (home / "Desktop").is_dir() else home
-    project = str(Path(os.environ.get("GLASSES_PROJECT", default_project)).expanduser())
+    project = real_folder(os.environ.get("GLASSES_PROJECT", default_project)) or str(home)
     claude = os.environ.get("CLAUDE_BIN", "claude")
     use_api_key = os.environ.get("GLASSES_USE_API_KEY") == "1"
     # Real work (code, email, calendar, business) runs on the best model.

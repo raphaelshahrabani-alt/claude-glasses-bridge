@@ -279,6 +279,9 @@ class Lane:
         if bash and "CLAUDE_CODE_GIT_BASH_PATH" not in env:
             env["CLAUDE_CODE_GIT_BASH_PATH"] = bash
         cmd = launch_command(cmd)
+        if not os.path.isdir(self.config.cwd):
+            # Windows only says "The directory name is invalid", which says nothing about which one.
+            raise FileNotFoundError(f"the folder Claude Code should work in doesn't exist: {self.config.cwd}")
         self.started_at = time.monotonic()
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,

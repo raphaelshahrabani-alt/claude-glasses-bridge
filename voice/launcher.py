@@ -20,6 +20,7 @@ from typing import Callable, Mapping
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import envfile  # noqa: E402
+from folders import work_folders  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 GATEWAY_PORT = 8788
@@ -232,6 +233,7 @@ class Launcher:
         saved = self._saved_launch()
         project = project or saved.get("project") or str(Path.home() / "Desktop")
         extra_dirs = extra_dirs if extra_dirs is not None else saved.get("extra_dirs", [])
+        project, extra_dirs = work_folders(project, extra_dirs, self.say, env=self.base_env or None)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         (self.data_dir / "launch.json").write_text(json.dumps({"project": project, "extra_dirs": extra_dirs}))
 

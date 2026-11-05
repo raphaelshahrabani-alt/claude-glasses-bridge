@@ -253,6 +253,11 @@ def check(launcher: Launcher, quick: bool = False, report: Report | None = None,
         else:
             report.ok("the voice program is running the current code")
 
+    project = launcher._saved_launch().get("project")
+    if project and not os.path.isdir(project):
+        report.bad(f"the folder Claude Code works in doesn't exist ({project}), so calls end as soon as they start",
+                   "run: glasses stop, then glasses start $HOME\\Documents (or any folder that exists)")
+
     gateway_env = envfile.read(launcher.visionclaw / "gateway" / ".env")
     wrong = livekit_problems(gateway_env)
     for problem in wrong:

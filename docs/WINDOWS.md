@@ -171,7 +171,7 @@ reach the PC, and runs a short live test. Anything wrong gets a ✗ and the fix.
 
 | | |
 | - | - |
-| `glasses start` | start everything (add folders to change where Claude works: `glasses start $HOME\Desktop $HOME\Downloads`) |
+| `glasses start` | start everything (add folders to change where Claude works: `glasses start $HOME\Documents $HOME\Downloads`; the first one is where it works, the rest it may also read and change) |
 | `glasses stop` | stop everything |
 | `glasses status` | what's running |
 | `glasses logs` | the end of the voice log (`glasses logs gateway` for the login service) |
@@ -202,6 +202,11 @@ reach the PC, and runs a short live test. Anything wrong gets a ✗ and the fix.
   `glasses livekit`, `glasses start`. If pasting into the prompt does nothing, type the secret by hand;
   nothing shows while you type, that's normal. A real secret is about 44 characters, and the prompt
   tells you if what arrived is far shorter.
+- **"Agent left the call" the moment a call starts:** `glasses logs` says why. If it says
+  `The directory name is invalid` (or the folder doesn't exist), the folder Claude Code was told to
+  work in isn't there. Windows often keeps the Desktop inside OneDrive. `glasses start` now looks for
+  it there and falls back to your home folder; use a folder that exists, for example
+  `glasses start $HOME\Documents`.
 - **Calls connect but it never answers:** `glasses logs`, and `glasses doctor`.
 - **Browser control doesn't work:** Chrome must be open, with the Claude extension signed in.
   Claude Code's Chrome control works on regular Windows, but **not** inside WSL, so don't run this
