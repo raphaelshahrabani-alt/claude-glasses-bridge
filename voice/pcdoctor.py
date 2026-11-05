@@ -152,17 +152,22 @@ def why_unreachable(url: str, timeout: float = PHONE_WAIT_S,
         return (f"the login service answered with error {err.code}", "run: glasses logs gateway")
     except (urllib.error.URLError, OSError, ValueError) as err:
         reason = getattr(err, "reason", err)
-        text = str(reason).lower()
-        if isinstance(reason, ssl.SSLError) or "certificate" in text or "ssl" in text:
-            return ("its security certificate isn't ready",
-                    f"open {DNS_PAGE}, click Enable HTTPS under HTTPS Certificates, then run glasses doctor --quick again")
-        if isinstance(reason, socket.gaierror) or "getaddrinfo" in text or "name or service" in text:
-            return ("this PC can't look up that name",
-                    f"open {DNS_PAGE}, check MagicDNS is on, and in the Tailscale menu make sure Use Tailscale DNS settings is ticked")
-        if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in text:
+        text = str(reason)
+        low = text.lower()
+        if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in low:
             return (f"it didn't answer within {int(timeout)} seconds",
                     f"the first time, Tailscale gets a security certificate, which can take a minute: run glasses doctor --quick again. "
                     f"If it keeps happening, check HTTPS is enabled at {DNS_PAGE}")
+        if isinstance(reason, socket.gaierror) or "getaddrinfo" in low or "name or service" in low:
+            return ("this PC can't look up that name",
+                    f"open {DNS_PAGE}, check MagicDNS is on, and in the Tailscale menu make sure Use Tailscale DNS settings is ticked")
+        if isinstance(reason, ssl.SSLCertVerificationError) or "certificate verify failed" in low:
+            return (f"this PC's own check doesn't trust its certificate ({text})",
+                    "that may only be this check; open the address with /health on the end in Safari on the iPhone, "
+                    "and if that shows ok the phone is fine")
+        if isinstance(reason, ssl.SSLError) or "ssl" in low or "certificate" in low:
+            return (f"the secure connection failed ({text})",
+                    f"check HTTPS is enabled at {DNS_PAGE}, then test the address with /health on the end in Safari on the iPhone")
         return (f"it couldn't connect ({reason})", "run: glasses stop, then glasses start, and try again")
 
 

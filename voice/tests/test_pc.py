@@ -498,8 +498,15 @@ class DoctorTest(unittest.TestCase):
         slow = why("https://pc.ts.net/health", timeout=30, opener=failing(urllib.error.URLError(socket.timeout("timed out"))))
         self.assertEqual(slow[0], "it didn't answer within 30 seconds")
         self.assertIn("Tailscale gets a security certificate", slow[1])  # says what the wait is for
-        self.assertIn("security certificate", why("https://pc.ts.net/health",
-                      opener=failing(urllib.error.URLError(ssl.SSLError("CERTIFICATE_VERIFY_FAILED"))))[0])
+        generic = why("https://pc.ts.net/health", opener=failing(urllib.error.URLError(ssl.SSLError(1, "TLSV1_ALERT_INTERNAL_ERROR"))))
+        self.assertIn("the secure connection failed (TLSV1_ALERT_INTERNAL_ERROR)", generic[0])  # the real error is shown
+        untrusted = why("https://pc.ts.net/health", opener=failing(urllib.error.URLError(
+            ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate"))))
+        self.assertIn("doesn't trust its certificate", untrusted[0])
+        self.assertIn("Safari", untrusted[1])
+        # a handshake that takes too long is a slow certificate, not a bad one
+        self.assertIn("didn't answer within", why("https://pc.ts.net/health", opener=failing(urllib.error.URLError(
+            TimeoutError("_ssl.c:1112: The handshake operation timed out"))))[0])
         self.assertIn("can't look up that name", why("https://pc.ts.net/health",
                       opener=failing(urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))))[0])
         report = pcdoctor.Report()
