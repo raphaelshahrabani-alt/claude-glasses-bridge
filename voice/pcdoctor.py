@@ -9,6 +9,8 @@ import json
 import os
 import re
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import urllib.error
@@ -134,6 +136,36 @@ def http_ok(url: str, timeout: float = 3.0, opener: Callable[..., Any] = urllib.
         return False
 
 
+PHONE_WAIT_S = 30.0  # the first request makes Tailscale fetch a security certificate, which can take a while
+DNS_PAGE = "login.tailscale.com/admin/dns"
+
+
+def why_unreachable(url: str, timeout: float = PHONE_WAIT_S,
+                    opener: Callable[..., Any] = urllib.request.urlopen) -> tuple[str, str] | None:
+    """None if the address answers. Otherwise (what happened, what to do), in plain words."""
+    try:
+        with opener(url, timeout=timeout) as response:
+            if 200 <= response.status < 300:
+                return None
+            return (f"the login service answered with error {response.status}", "run: glasses logs gateway")
+    except urllib.error.HTTPError as err:
+        return (f"the login service answered with error {err.code}", "run: glasses logs gateway")
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        reason = getattr(err, "reason", err)
+        text = str(reason).lower()
+        if isinstance(reason, ssl.SSLError) or "certificate" in text or "ssl" in text:
+            return ("its security certificate isn't ready",
+                    f"open {DNS_PAGE}, click Enable HTTPS under HTTPS Certificates, then run glasses doctor --quick again")
+        if isinstance(reason, socket.gaierror) or "getaddrinfo" in text or "name or service" in text:
+            return ("this PC can't look up that name",
+                    f"open {DNS_PAGE}, check MagicDNS is on, and in the Tailscale menu make sure Use Tailscale DNS settings is ticked")
+        if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in text:
+            return (f"it didn't answer within {int(timeout)} seconds",
+                    f"the first time, Tailscale gets a security certificate, which can take a minute: run glasses doctor --quick again. "
+                    f"If it keeps happening, check HTTPS is enabled at {DNS_PAGE}")
+        return (f"it couldn't connect ({reason})", "run: glasses stop, then glasses start, and try again")
+
+
 def tailscale_exe(which: Callable[[str], str | None] = shutil.which,
                   exists: Callable[[str], bool] = lambda p: Path(p).exists()) -> str | None:
     """Tailscale's command, which is not always on PATH right after the installer ran."""
@@ -161,7 +193,7 @@ def tailscale_address(run: Callable[..., Any] = subprocess.run, which: Callable[
     return result
 
 
-def check_phone(report: Report, tailscale: dict[str, Any], reachable: Callable[[str], bool] = http_ok) -> None:
+def check_phone(report: Report, tailscale: dict[str, Any], reachable: Callable[[str], bool] | None = None) -> None:
     if not tailscale.get("installed"):
         report.bad("Tailscale isn't installed, so the phone can only reach this PC on your home Wi-Fi",
                    "run glasses setup, or install Tailscale from tailscale.com/download")
@@ -175,17 +207,24 @@ def check_phone(report: Report, tailscale: dict[str, Any], reachable: Callable[[
         report.bad("Tailscale isn't sharing the login service with your phone yet",
                    f"run: tailscale serve --bg {GATEWAY_PORT}   (if it asks you to approve HTTPS, open the link it prints)")
         return
-    if address and reachable(f"{address}/health"):
+    if not address:
+        report.bad("Tailscale didn't give this PC a name yet", f"open {DNS_PAGE} and check MagicDNS is on")
+        return
+    if reachable is not None:  # a stand-in for the real check
+        problem = None if reachable(f"{address}/health") else (
+            "it doesn't answer", "start the login service with glasses start, and check the login service line above")
+    else:
+        problem = why_unreachable(f"{address}/health")
+    if problem is None:
         report.ok(f"the phone can reach this PC at {address}")
     else:
-        report.bad(f"Tailscale is sharing {address}, but it doesn't answer",
-                   "start the login service with glasses start, and check the login service line above")
+        report.bad(f"Tailscale is sharing {address}, but {problem[0]}", problem[1])
 
 
 def check(launcher: Launcher, quick: bool = False, report: Report | None = None,
           gateway_up: Callable[[], bool] | None = None, tailscale: dict[str, Any] | None = None,
           run_selftest: Callable[[], list[dict[str, Any]]] | None = None,
-          reachable: Callable[[str], bool] = http_ok,
+          reachable: Callable[[str], bool] | None = None,
           elevenlabs: Callable[[str], dict[str, Any]] | None = None,
           deepgram: Callable[[str], dict[str, Any]] | None = None) -> Report:
     report = report or Report()

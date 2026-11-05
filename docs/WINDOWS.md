@@ -187,6 +187,12 @@ reach the PC, and runs a short live test. Anything wrong gets a ✗ and the fix.
   ones (Node.js from nodejs.org, Tailscale from tailscale.com/download/windows).
 - **Claude Code can't find Git Bash:** install Git (`winget install --id Git.Git -e`), then open a
   new PowerShell window.
+- **`glasses doctor` says Tailscale is sharing an address "but it doesn't answer":** it now says why.
+  The first request makes Tailscale fetch a security certificate, which can take up to a minute, so
+  run `glasses doctor --quick` again. If it says the certificate isn't ready, open
+  login.tailscale.com/admin/dns and click **Enable HTTPS**. If it says the PC can't look up the name,
+  check **MagicDNS** is on there and that **Use Tailscale DNS settings** is ticked in the Tailscale
+  menu (the icon near the clock).
 - **The phone says it can't connect:** `glasses doctor`. The "phone can reach this PC" line says
   whether Tailscale is signed in on the PC, whether the login service is shared, and whether it
   answers. Also check Tailscale is on, on the iPhone.

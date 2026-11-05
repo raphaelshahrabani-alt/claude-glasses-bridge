@@ -470,6 +470,42 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("tailscale serve --bg 8788", text)
         self.assertIn("Tailscale is sharing https://pc.ts.net, but it doesn't answer", text)
 
+    def test_why_the_phone_address_does_not_answer(self):
+        import socket
+        import ssl
+        import urllib.error
+
+        def failing(error):
+            def opener(url, timeout):
+                raise error
+            return opener
+
+        def answer(status):
+            class Response:
+                def __init__(self):
+                    self.status = status
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+            return lambda url, timeout: Response()
+
+        why = pcdoctor.why_unreachable
+        self.assertIsNone(why("https://pc.ts.net/health", opener=answer(200)))
+        self.assertIn("answered with error 502", why("https://pc.ts.net/health", opener=answer(502))[0])
+        slow = why("https://pc.ts.net/health", timeout=30, opener=failing(urllib.error.URLError(socket.timeout("timed out"))))
+        self.assertEqual(slow[0], "it didn't answer within 30 seconds")
+        self.assertIn("Tailscale gets a security certificate", slow[1])  # says what the wait is for
+        self.assertIn("security certificate", why("https://pc.ts.net/health",
+                      opener=failing(urllib.error.URLError(ssl.SSLError("CERTIFICATE_VERIFY_FAILED"))))[0])
+        self.assertIn("can't look up that name", why("https://pc.ts.net/health",
+                      opener=failing(urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed"))))[0])
+        report = pcdoctor.Report()
+        pcdoctor.check_phone(report, {"installed": True, "state": "Running", "dns": "", "https": None, "serving": True})
+        self.assertIn("didn't give this PC a name yet", report.render())
+
     def test_credits_out_until_a_deepgram_key_is_added(self):
         self.launcher.remember("voice", os.getpid())
         (self.data / "voice.log").write_text(
