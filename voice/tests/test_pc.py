@@ -26,6 +26,10 @@ import setup_pc  # noqa: E402
 from launcher import Launcher, missing_setup, venv_python, worker_env  # noqa: E402
 
 
+FAKE_KEY = "APIkey1234567"
+FAKE_SECRET = "s3cr3t" * 7 + "ab"  # 44 characters, like a real one
+
+
 def make_install(root: Path, livekit=True, node_modules=True, venv=True):
     """A data folder and a VisionClaw folder that look set up."""
     data, vc = root / "data", root / "VisionClaw"
@@ -33,8 +37,8 @@ def make_install(root: Path, livekit=True, node_modules=True, venv=True):
     if node_modules:
         (vc / "gateway" / "node_modules").mkdir()
     if livekit:
-        (vc / "gateway" / ".env").write_text("PORT=8788\nLIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY=key1\n"
-                                              "LIVEKIT_API_SECRET=secret1\nGATEWAY_TOKENS=abc123:me\n")
+        (vc / "gateway" / ".env").write_text(f"PORT=8788\nLIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY={FAKE_KEY}\n"
+                                              f"LIVEKIT_API_SECRET={FAKE_SECRET}\nGATEWAY_TOKENS=abc123:me\n")
     if venv:
         py = venv_python(data)
         py.parent.mkdir(parents=True)
@@ -243,7 +247,7 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(env["ELEVEN_API_KEY"], "ek")
         self.assertEqual(env["GLASSES_WORK_EFFORT"], "high")  # what's already set wins
         self.assertEqual((env["LIVEKIT_URL"], env["LIVEKIT_API_KEY"], env["LIVEKIT_API_SECRET"]),
-                         ("wss://x.livekit.cloud", "key1", "secret1"))
+                         ("wss://x.livekit.cloud", FAKE_KEY, FAKE_SECRET))
         self.assertEqual(env["GLASSES_PROJECT"], "C:/proj")
         self.assertEqual(env["GLASSES_ADD_DIRS"], os.pathsep.join(["C:/a", "C:/b"]))
         self.assertEqual((env["PYTHONUTF8"], env["GLASSES_DATA_DIR"]), ("1", str(data)))
@@ -305,6 +309,45 @@ class LauncherTest(unittest.TestCase):
         text = "\n".join(self.said)
         self.assertIn("didn't finish starting", text)
         self.assertIn("    ImportError: no module named x", text)  # the cause is shown, not just where to look
+
+    def test_a_one_character_livekit_secret_is_caught_before_starting(self):
+        data, vc = make_install(self.root / "bad")
+        (vc / "gateway" / ".env").write_text("LIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY=" + FAKE_KEY +
+                                             "\nLIVEKIT_API_SECRET=\x16\nGATEWAY_TOKENS=abc:me\n")
+        launcher = Launcher(data_dir=data, visionclaw=vc, say=self.said.append)
+        self.assertEqual(launcher.start(), 1)
+        text = "\n".join(self.said)
+        self.assertIn("the LiveKit secret is only 1 character, so LiveKit will refuse it", text)
+        self.assertIn("Run: glasses setup", text)
+
+    def test_livekit_problems(self):
+        good = {"LIVEKIT_URL": "wss://x.livekit.cloud", "LIVEKIT_API_KEY": FAKE_KEY, "LIVEKIT_API_SECRET": FAKE_SECRET}
+        self.assertEqual(launcher_mod.livekit_problems(good), [])
+        self.assertIn("missing LIVEKIT_API_SECRET", " ".join(launcher_mod.livekit_problems({**good, "LIVEKIT_API_SECRET": ""})))
+        self.assertIn("missing LIVEKIT_URL", " ".join(launcher_mod.livekit_problems({**good, "LIVEKIT_URL": "paste-here"})))
+        short = " ".join(launcher_mod.livekit_problems({**good, "LIVEKIT_API_SECRET": "abc"}))
+        self.assertIn("only 3 characters", short)
+        self.assertIn("should start with wss://", " ".join(launcher_mod.livekit_problems({**good, "LIVEKIT_URL": "https://x"})))
+
+    def test_diagnose_voice_log(self):
+        refused = "livekit.agents ERROR failed to connect to livekit, retrying in 2s: 401 Unauthorized"
+        self.assertIn("LiveKit refused the keys (error 401)", launcher_mod.diagnose_voice_log(refused))
+        self.assertIn("Run: glasses livekit", launcher_mod.diagnose_voice_log(refused))
+        self.assertIn("can't reach LiveKit", launcher_mod.diagnose_voice_log("failed to connect to livekit: timed out"))
+        self.assertIsNone(launcher_mod.diagnose_voice_log("registered worker"))
+        self.assertIsNone(launcher_mod.diagnose_voice_log("HTTP 401 from some other service"))
+
+    def test_a_refused_start_says_why_and_how_to_fix_it(self):
+        launcher = self.launcher()
+        launcher.spawn = lambda cmd, cwd, env, log: (
+            log.parent.mkdir(parents=True, exist_ok=True),
+            log.write_text("failed to connect to livekit, retrying: 401 Unauthorized\nThe HMAC key is 1 bytes long\n"),
+            os.getpid())[-1]
+        launcher.port_open = lambda p: True
+        self.assertEqual(launcher.start("C:/proj", wait_s=0.2), 1)
+        text = "\n".join(self.said)
+        self.assertIn("didn't finish starting", text)
+        self.assertIn("→ LiveKit refused the keys (error 401)", text)
 
     def test_quiet_start_says_nothing_when_all_is_well(self):
         launcher = self.launcher()
@@ -396,6 +439,21 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("✗ Tailscale isn't signed in (it says NeedsLogin)", out)
         self.assertRegex(out, r"\d+ problems? found\.")
 
+    def test_a_short_livekit_secret_is_flagged(self):
+        self.launcher.remember("voice", os.getpid())
+        (self.vc / "gateway" / ".env").write_text(f"LIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY={FAKE_KEY}\n"
+                                                   "LIVEKIT_API_SECRET=x\nGATEWAY_TOKENS=abc:me\n")
+        out = self.run_check(quick=True)
+        self.assertIn("✗ the LiveKit secret is only 1 character", out)
+        self.assertIn("→ run: glasses livekit", out)
+        self.assertNotIn("✓ the LiveKit keys are in VisionClaw's settings", out)
+
+    def test_a_voice_program_that_failed_to_start_with_401_says_so(self):
+        self.launcher.log("voice").write_text("failed to connect to livekit, retrying: 401 Unauthorized\n")
+        out = self.run_check(quick=True)
+        self.assertIn("✗ the voice program's last start failed: LiveKit refused the keys (error 401)", out)
+        self.assertIn("run: glasses livekit", out)
+
     def test_a_stale_voice_program(self):
         self.launcher.pid_file("voice").parent.mkdir(parents=True, exist_ok=True)
         self.launcher.pid_file("voice").write_text(json.dumps({"pid": os.getpid(), "started": 1.0}))
@@ -485,7 +543,7 @@ class SetupTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def setup_run(self, launcher, answers, answers_hidden=("secret1",), present=None):
+    def setup_run(self, launcher, answers, answers_hidden=(FAKE_SECRET,), present=None):
         present = self.present if present is None else present
         answers, hidden = iter(answers), iter(answers_hidden)
 
@@ -517,7 +575,7 @@ class SetupTest(unittest.TestCase):
     def test_a_fresh_pc(self):
         launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
                             say=self.said.append)
-        code = self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", "mycode"])
+        code = self.setup_run(launcher, ["wss://p.livekit.cloud", FAKE_KEY, "mycode"])
         commands = [" ".join(c) for c in self.ran]
         self.assertTrue(any(c.startswith("winget install --id OpenJS.NodeJS.LTS -e") for c in commands))
         self.assertTrue(any(c.startswith("winget install --id Tailscale.Tailscale -e") for c in commands))
@@ -529,7 +587,7 @@ class SetupTest(unittest.TestCase):
         self.assertTrue(any("pip install --quiet -r" in c and c.endswith("requirements.txt") for c in commands))
         env = envfile.read(launcher.visionclaw / "gateway" / ".env")
         self.assertEqual((env["LIVEKIT_URL"], env["LIVEKIT_API_KEY"], env["LIVEKIT_API_SECRET"]),
-                         ("wss://p.livekit.cloud", "key1", "secret1"))
+                         ("wss://p.livekit.cloud", FAKE_KEY, FAKE_SECRET))
         self.assertEqual(env["GATEWAY_TOKENS"], "mycode:me")
         self.assertEqual((env["PORT"], env["ANTHROPIC_API_KEY"]), ("8788", "sk-ant-placeholder"))
         self.assertEqual(len(env["GATEWAY_SERVICE_TOKEN"]), 32)
@@ -541,7 +599,7 @@ class SetupTest(unittest.TestCase):
     def test_running_it_again_does_nothing_it_already_did(self):
         launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
                             say=self.said.append)
-        self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""])
+        self.setup_run(launcher, ["wss://p.livekit.cloud", FAKE_KEY, ""])
         first_env = (launcher.visionclaw / "gateway" / ".env").read_text()
         self.ran.clear()
         self.said.clear()
@@ -558,7 +616,7 @@ class SetupTest(unittest.TestCase):
         self.winget_hangs = True
         launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
                             say=self.said.append)
-        code = self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""])
+        code = self.setup_run(launcher, ["wss://p.livekit.cloud", FAKE_KEY, ""])
         self.assertEqual(code, 1)
         text = "\n".join(self.said)
         self.assertIn("winget didn't finish in 10 minutes, so I stopped it", text)
@@ -569,9 +627,81 @@ class SetupTest(unittest.TestCase):
     def test_a_pc_without_winget_is_told_what_to_install(self):
         launcher = Launcher(data_dir=self.root / "data", visionclaw=self.root / "VisionClaw", root=HERE.parent.parent,
                             say=self.said.append)
-        self.setup_run(launcher, ["wss://p.livekit.cloud", "key1", ""], present={"git"})
+        self.setup_run(launcher, ["wss://p.livekit.cloud", FAKE_KEY, ""], present={"git"})
         self.assertFalse(any(c[0] == "winget" for c in self.ran))
         self.assertTrue(any("Node.js isn't installed: download it from https://nodejs.org" in s for s in self.said))
+
+
+class LiveKitTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.said = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def gateway_env(self, text):
+        path = self.root / "VisionClaw" / "gateway" / ".env"
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+        return path
+
+    def run_set(self, path, answers, hidden):
+        answers, hidden = iter(answers), iter(hidden)
+        return setup_pc.set_livekit(path, ask=lambda p: next(answers), askpass=lambda p: next(hidden), say=self.said.append)
+
+    def test_the_new_values_replace_the_old_and_everything_else_stays(self):
+        path = self.gateway_env("PORT=8788\nLIVEKIT_URL=wss://old.livekit.cloud\nLIVEKIT_API_KEY=APIold\n"
+                                "LIVEKIT_API_SECRET=\x16\nGATEWAY_TOKENS=mycode:me\n")
+        self.assertEqual(self.run_set(path, ["", FAKE_KEY], [FAKE_SECRET]), 0)  # Enter keeps the address
+        env = envfile.read(path)
+        self.assertEqual((env["LIVEKIT_URL"], env["LIVEKIT_API_KEY"], env["LIVEKIT_API_SECRET"]),
+                         ("wss://old.livekit.cloud", FAKE_KEY, FAKE_SECRET))
+        self.assertEqual((env["PORT"], env["GATEWAY_TOKENS"]), ("8788", "mycode:me"))
+        self.assertTrue(any("Saved" in s and "glasses stop" in s for s in self.said))
+        self.assertEqual(launcher_mod.livekit_problems(env), [])
+
+    def test_a_secret_that_arrived_as_one_character_is_not_saved(self):
+        path = self.gateway_env(f"LIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY=APIold\nLIVEKIT_API_SECRET={FAKE_SECRET}\n")
+        before = path.read_text()
+        self.assertEqual(self.run_set(path, ["wss://new.livekit.cloud", FAKE_KEY], ["\x16"]), 1)
+        self.assertEqual(path.read_text(), before)  # nothing changed, not even the address
+        self.assertTrue(any("only 0 characters" in s or "only 1 character" in s or "nothing was entered" in s for s in self.said))
+
+    def test_a_short_secret_says_how_long_a_real_one_is(self):
+        path = self.gateway_env("LIVEKIT_URL=wss://x.livekit.cloud\n")
+        self.assertEqual(self.run_set(path, ["", FAKE_KEY], ["abc"]), 1)
+        text = "\n".join(self.said)
+        self.assertIn("only 3 characters; a real one is about 44", text)
+        self.assertIn("type it by hand", text)
+
+    def test_a_bad_address_or_key_is_refused(self):
+        path = self.gateway_env("PORT=8788\n")
+        self.assertEqual(self.run_set(path, ["https://x.livekit.cloud"], []), 1)
+        self.assertIn("The address should start with wss://", "\n".join(self.said))
+        self.assertEqual(self.run_set(path, ["wss://x.livekit.cloud", "AP"], []), 1)
+        self.assertIn("That key is only 2 characters", "\n".join(self.said))
+
+    def test_it_needs_setup_to_have_run_first(self):
+        path = self.root / "nowhere" / "gateway" / ".env"
+        self.assertEqual(self.run_set(path, [], []), 1)
+        self.assertTrue(any("Run: glasses setup" in s for s in self.said))
+
+    def test_setup_asks_again_for_a_secret_that_was_saved_too_short(self):
+        path = self.gateway_env(f"LIVEKIT_URL=wss://x.livekit.cloud\nLIVEKIT_API_KEY={FAKE_KEY}\nLIVEKIT_API_SECRET=x\n"
+                                "GATEWAY_TOKENS=mycode:me\n")
+        asked = []
+        ok = setup_pc.write_gateway_env(path, ask=lambda p: asked.append(p) or "",
+                                        askpass=lambda p: asked.append(p) or FAKE_SECRET, say=self.said.append)
+        self.assertTrue(ok)
+        self.assertEqual(len(asked), 1)  # only the secret
+        self.assertIn("secret", asked[0])
+        self.assertEqual(envfile.read(path)["LIVEKIT_API_SECRET"], FAKE_SECRET)
+        self.assertEqual(envfile.read(path)["GATEWAY_TOKENS"], "mycode:me")
+
+    def test_the_cli_command_exists(self):
+        self.assertIn("glasses livekit", glasses_cli.USAGE)
 
 
 class AccessCodeTest(unittest.TestCase):

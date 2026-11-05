@@ -24,6 +24,33 @@ import envfile  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 GATEWAY_PORT = 8788
 LIVEKIT_KEYS = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+LIVEKIT_SECRET_MIN = 20  # real secrets are about 44 characters; a failed paste leaves one or two
+
+
+def livekit_problems(env: Mapping[str, str]) -> list[str]:
+    """What is wrong with the LiveKit values in VisionClaw's settings, in plain words."""
+    problems = []
+    absent = [k for k in LIVEKIT_KEYS if not env.get(k) or env[k].startswith("paste-")]
+    if absent:
+        problems.append(f"the login service's settings are missing {', '.join(absent)}")
+    secret = env.get("LIVEKIT_API_SECRET", "")
+    if secret and not secret.startswith("paste-") and len(secret) < LIVEKIT_SECRET_MIN:
+        problems.append(f"the LiveKit secret is only {len(secret)} character{'' if len(secret) == 1 else 's'}, so LiveKit "
+                        "will refuse it (a real one is about 44; a paste probably went wrong)")
+    url = env.get("LIVEKIT_URL", "")
+    if url and not url.startswith(("wss://", "ws://")):
+        problems.append("the LiveKit address should start with wss://")
+    return problems
+
+
+def diagnose_voice_log(text: str) -> str | None:
+    """A plain-words reason for a voice program that never registered, from its log."""
+    if "failed to connect to livekit" in text and "401" in text:
+        return ("LiveKit refused the keys (error 401). The API secret or key is wrong; if the secret is short, a paste "
+                "went wrong. Run: glasses livekit")
+    if "failed to connect to livekit" in text:
+        return "The voice program can't reach LiveKit. Check the internet connection and the LiveKit address."
+    return None
 CODE_FILES = ("*.py", "*.md")
 
 
@@ -144,10 +171,8 @@ def missing_setup(data_dir: Path, visionclaw: Path) -> list[str]:
         problems.append(f"VisionClaw isn't downloaded ({visionclaw})")
     elif not (gateway / "node_modules").is_dir():
         problems.append("VisionClaw's login service isn't installed yet")
-    env = envfile.read(gateway / ".env")
-    absent = [k for k in LIVEKIT_KEYS if not env.get(k) or env[k].startswith("paste-")]
-    if gateway.is_dir() and absent:
-        problems.append(f"the login service's settings are missing {', '.join(absent)}")
+    if gateway.is_dir():
+        problems += livekit_problems(envfile.read(gateway / ".env"))
     return problems
 
 
@@ -238,6 +263,12 @@ class Launcher:
             else:
                 self.say(f"✗ the voice program didn't finish starting. The end of {log}:")
                 self.say(self._tail(log, 15))
+                try:
+                    reason = diagnose_voice_log(log.read_text(encoding="utf-8", errors="replace")[size:])
+                except OSError:
+                    reason = None
+                if reason:
+                    self.say(f"→ {reason}")
                 code = 1
         if code == 0:
             say("Ready. Start a call from the phone.")

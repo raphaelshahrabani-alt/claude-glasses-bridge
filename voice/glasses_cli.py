@@ -19,6 +19,7 @@ USAGE = """glasses: your Meta glasses assistant, on this PC
   glasses doctor              check every piece and say what to fix (--quick skips the live test)
   glasses phone               let your phone reach this PC from anywhere (Tailscale)
   glasses newcode             make a new access code for the phone app
+  glasses livekit             enter your LiveKit address, key and secret again
   glasses key NAME            save a key: ELEVEN_API_KEY (voice) or DEEPGRAM_API_KEY (hearing)
   glasses email add you@example.com | list | remove you@example.com
   glasses pick-voice          hear the voices and pick one
@@ -131,6 +132,10 @@ def main(argv: list[str]) -> int:
         return save(rest[0] if rest else "")
     if command == "phone":
         return phone(launcher)
+    if command == "livekit":
+        from setup_pc import set_livekit
+
+        return set_livekit(launcher.visionclaw / "gateway" / ".env")
     if command == "newcode":
         from setup_pc import new_access_code
 

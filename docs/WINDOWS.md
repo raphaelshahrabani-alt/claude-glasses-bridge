@@ -176,6 +176,7 @@ reach the PC, and runs a short live test. Anything wrong gets a ✗ and the fix.
 | `glasses status` | what's running |
 | `glasses logs` | the end of the voice log (`glasses logs gateway` for the login service) |
 | `glasses pick-voice` | hear the ElevenLabs voices and pick one |
+| `glasses livekit` | enter your LiveKit address, key and secret again (see below) |
 | `glasses doctor` | check everything |
 
 ## If something goes wrong
@@ -189,6 +190,12 @@ reach the PC, and runs a short live test. Anything wrong gets a ✗ and the fix.
 - **The phone says it can't connect:** `glasses doctor`. The "phone can reach this PC" line says
   whether Tailscale is signed in on the PC, whether the login service is shared, and whether it
   answers. Also check Tailscale is on, on the iPhone.
+- **"The voice program didn't finish starting" and the log says `401`:** LiveKit refused the keys,
+  usually because the secret didn't paste right. On cloud.livekit.io make a new key (Settings → API
+  Keys → Create key; the secret is shown once, so use its Copy button), then run `glasses stop`,
+  `glasses livekit`, `glasses start`. If pasting into the prompt does nothing, type the secret by hand;
+  nothing shows while you type, that's normal. A real secret is about 44 characters, and the prompt
+  tells you if what arrived is far shorter.
 - **Calls connect but it never answers:** `glasses logs`, and `glasses doctor`.
 - **Browser control doesn't work:** Chrome must be open, with the Claude extension signed in.
   Claude Code's Chrome control works on regular Windows, but **not** inside WSL, so don't run this

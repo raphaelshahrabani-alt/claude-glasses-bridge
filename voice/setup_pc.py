@@ -6,7 +6,6 @@ settings file by asking for your LiveKit values. Safe to run again: it only does
 """
 from __future__ import annotations
 
-import getpass
 import os
 import secrets
 import shutil
@@ -18,7 +17,8 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import envfile  # noqa: E402
-from launcher import ROOT, Launcher, venv_python  # noqa: E402
+import keys  # noqa: E402
+from launcher import ROOT, Launcher, livekit_problems, venv_python  # noqa: E402
 
 VISIONCLAW_REPO = "https://github.com/sseanliu/VisionClaw"
 VISIONCLAW_COMMIT = "3f39807"  # the version the patches in integrations/visionclaw were made for
@@ -51,7 +51,7 @@ def refresh_path() -> None:
 
 
 def setup(launcher: Launcher | None = None, run: Callable[..., "subprocess.CompletedProcess"] = subprocess.run,
-          ask: Callable[[str], str] = input, askpass: Callable[[str], str] = getpass.getpass,
+          ask: Callable[[str], str] = input, askpass: Callable[[str], str] = keys.read_secret,
           which: Callable[[str], str | None] = shutil.which, windows: bool | None = None,
           path_refresh: Callable[[], None] = refresh_path) -> int:
     launcher = launcher or Launcher()
@@ -161,10 +161,11 @@ def write_gateway_env(path: Path, ask: Callable[[str], str], askpass: Callable[[
     """VisionClaw's settings file: the LiveKit values and your access code. Asks only for what's missing."""
     current = envfile.read(path)
 
-    def missing(key: str) -> bool:
-        return not current.get(key) or current[key].startswith("paste-")
-
-    needed = [k for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET") if missing(k)]
+    wrong = {k: True for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+             if not current.get(k) or current[k].startswith("paste-")}
+    if livekit_problems(current) and "LIVEKIT_API_SECRET" not in wrong and current.get("LIVEKIT_API_SECRET"):
+        wrong["LIVEKIT_API_SECRET"] = True  # present, but too short to be real
+    needed = list(wrong)
     if not needed and current.get("GATEWAY_TOKENS"):
         say("  ✓ already filled in")
         return True
@@ -176,11 +177,8 @@ def write_gateway_env(path: Path, ask: Callable[[str], str], askpass: Callable[[
     values.setdefault("GATEWAY_SERVICE_TOKEN", secrets.token_hex(16))
     values.setdefault("STORE_PATH", "./data/gateway-store.json")
     for key in needed:
-        label = {"LIVEKIT_URL": "LiveKit address (wss://...)", "LIVEKIT_API_KEY": "LiveKit API key",
-                 "LIVEKIT_API_SECRET": "LiveKit API secret"}[key]
-        answer = (askpass if key == "LIVEKIT_API_SECRET" else ask)(f"  {label}: ").strip()
-        if not answer:
-            say("  (left empty)")
+        answer = ask_livekit_value(key, ask, askpass, say)
+        if answer is None:
             return False
         values[key] = answer
     if not values.get("GATEWAY_TOKENS"):
@@ -197,6 +195,58 @@ def write_gateway_env(path: Path, ask: Callable[[str], str], askpass: Callable[[
         f.write("\n".join(lines) + "\n")
     say("  ✓ saved")
     return True
+
+
+LIVEKIT_LABELS = {"LIVEKIT_URL": "LiveKit address (wss://...)", "LIVEKIT_API_KEY": "LiveKit API key",
+                  "LIVEKIT_API_SECRET": "LiveKit API secret (nothing shows as you paste)"}
+
+
+def ask_livekit_value(key: str, ask: Callable[[str], str], askpass: Callable[[str], str],
+                      say: Callable[[str], None]) -> str | None:
+    """One LiveKit value, cleaned and checked. None (after saying why) if it can't be right."""
+    raw = (askpass if key == "LIVEKIT_API_SECRET" else ask)(f"  {LIVEKIT_LABELS[key]}: ")
+    value = keys.clean(raw or "")
+    if not value:
+        say("  (nothing was entered)")
+        return None
+    if key == "LIVEKIT_URL" and not value.startswith(("wss://", "ws://")):
+        say("  ✗ The address should start with wss://")
+        return None
+    if key == "LIVEKIT_API_KEY" and len(value) < 8:
+        say(f"  ✗ That key is only {len(value)} characters; a real one is about 15 (it starts with API).")
+        return None
+    if key == "LIVEKIT_API_SECRET" and len(value) < 20:
+        say(f"  ✗ That secret is only {len(value)} character{'' if len(value) == 1 else 's'}; a real one is about 44. "
+            + keys.what_arrived())
+        say("  Copy it again (type it by hand if pasting fails) and run: glasses livekit")
+        return None
+    return value
+
+
+def set_livekit(path: Path, ask: Callable[[str], str] = input, askpass: Callable[[str], str] = keys.read_secret,
+                say: Callable[[str], None] = print) -> int:
+    """`glasses livekit`: enter the LiveKit address, key and secret again, keeping everything else."""
+    current = envfile.read(path)
+    if not path.parent.is_dir():
+        say(f"VisionClaw isn't downloaded yet ({path.parent.parent}). Run: glasses setup")
+        return 1
+    say("Open cloud.livekit.io, pick your project, then Settings → API Keys, and create a new key.")
+    say("The secret is shown only once. Use the Copy button, then paste here (Ctrl+V or right-click).")
+    shown = current.get("LIVEKIT_URL", "")
+    url = keys.clean(ask(f"  LiveKit address{' (Enter keeps ' + shown + ')' if shown else ''}: ") or "") or shown
+    if not url.startswith(("wss://", "ws://")):
+        say("  ✗ The address should start with wss://")
+        return 1
+    api_key = ask_livekit_value("LIVEKIT_API_KEY", ask, askpass, say)
+    if api_key is None:
+        return 1
+    secret = ask_livekit_value("LIVEKIT_API_SECRET", ask, askpass, say)
+    if secret is None:
+        return 1
+    for name, value in (("LIVEKIT_URL", url), ("LIVEKIT_API_KEY", api_key), ("LIVEKIT_API_SECRET", secret)):
+        envfile.set_value(path, name, value)
+    say("✓ Saved. Restart to use it: glasses stop, then glasses start")
+    return 0
 
 
 def new_access_code(path: Path, make: Callable[[], str] = lambda: secrets.token_hex(8)) -> str | None:

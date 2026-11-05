@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import envfile  # noqa: E402
 import voicecheck  # noqa: E402
-from launcher import GATEWAY_PORT, LIVEKIT_KEYS, Launcher, code_changed_at, venv_python  # noqa: E402
+from launcher import (GATEWAY_PORT, Launcher, code_changed_at, diagnose_voice_log,  # noqa: E402
+                      livekit_problems, venv_python)
 
 API_ERROR_HELP = {
     "billing_error": ("Claude Code said the credit balance is too low",
@@ -209,11 +210,18 @@ def check(launcher: Launcher, quick: bool = False, report: Report | None = None,
             report.ok("the voice program is running the current code")
 
     gateway_env = envfile.read(launcher.visionclaw / "gateway" / ".env")
-    absent = [k for k in LIVEKIT_KEYS if not gateway_env.get(k)]
-    if absent:
-        report.bad(f"{launcher.visionclaw / 'gateway' / '.env'} is missing {', '.join(absent)}", "run: glasses setup")
-    else:
+    wrong = livekit_problems(gateway_env)
+    for problem in wrong:
+        report.bad(problem, "run: glasses livekit")
+    if not wrong:
         report.ok("the LiveKit keys are in VisionClaw's settings")
+    try:
+        started = (launcher.log("voice")).read_text(encoding="utf-8", errors="replace")[-20000:]
+    except OSError:
+        started = ""
+    refusal = diagnose_voice_log(started)
+    if refusal and not launcher.info("voice") and not wrong:
+        report.bad(f"the voice program's last start failed: {refusal}", "run: glasses livekit, then glasses stop and glasses start")
 
     claude = shutil.which("claude")
     if not claude:
