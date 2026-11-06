@@ -23,6 +23,7 @@ import glasses_cli  # noqa: E402
 import keys  # noqa: E402
 import launcher as launcher_mod  # noqa: E402
 import pcdoctor  # noqa: E402
+import profile_setup  # noqa: E402
 import setup_pc  # noqa: E402
 from launcher import Launcher, missing_setup, venv_python, worker_env  # noqa: E402
 
@@ -772,6 +773,83 @@ class LaneFolderTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(FileNotFoundError) as caught:
             await lane.start()
         self.assertIn("the folder Claude Code should work in doesn't exist", str(caught.exception))
+
+
+class ProfileTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "persona.md"
+        self.said = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def answers(self, *replies):
+        replies = iter(replies)
+        return lambda prompt: next(replies)
+
+    FULL = ["Alex Example", "Lex", "I run two small companies.", "America/Toronto",
+            "Acme Bakery", "Sells bread online.", "acme.example", "Rival Loaves, Flour Weekly",
+            "Bright Tools", "Software for bakers.", "", "",
+            "",  # no more businesses
+            "bakery wheat prices", "Canadian food rules", "",  # news topics
+            "Brightly - the Bright Tools app", "",  # projects
+            "Keep answers short."]
+
+    def test_the_answers_become_a_profile_the_voice_program_understands(self):
+        text = profile_setup.interview(self.answers(*self.FULL), self.said.append)
+        import worker
+
+        self.assertEqual(worker.first_name(text), "Lex")
+        self.assertIn("- What I do: I run two small companies.", text)
+        self.assertIn("- Time zone: America/Toronto", text)
+        self.assertIn("- Acme Bakery: Sells bread online. Website: acme.example. Watch: Rival Loaves, Flour Weekly.", text)
+        self.assertIn("- Bright Tools: Software for bakers.", text)
+        self.assertIn("- bakery wheat prices", text)
+        self.assertIn("- Brightly: the Bright Tools app.", text)
+        self.assertIn("- Also: Keep answers short.", text)
+        self.assertIn("search the web for each business, competitor and topic above", text)
+        self.assertIn("**Never send**", text)  # the standing rules from the template stay
+        self.assertNotIn("<your name>", text)
+        self.assertNotIn("~/Desktop", text)  # Desktop may not exist on this PC
+        terms = worker.keyterms(text)
+        for name in ("Acme Bakery", "Bright Tools", "Brightly"):
+            self.assertIn(name, terms)  # speech recognition expects the business names
+
+    def test_skipping_everything_still_gives_a_usable_profile(self):
+        text = profile_setup.interview(lambda prompt: "", self.said.append)
+        self.assertIn("## My businesses", text)
+        self.assertIn("none written down yet", text)
+        self.assertIn("## Always check with me first", text)
+
+    def test_colons_and_line_breaks_cannot_break_the_profile(self):
+        text = profile_setup.interview(self.answers("Alex: the boss\nline two", "", "", "", "", "", "", ""), self.said.append, zone="UTC")
+        self.assertIn("- Name: Alex - the boss line two", text)
+        self.assertIn("- Time zone: UTC", text)  # Enter keeps the zone offered
+
+    def test_first_run_writes_the_file_and_shows_it(self):
+        self.assertEqual(profile_setup.run(self.path, ask=self.answers(*self.FULL), say=self.said.append), 0)
+        self.assertIn("- Acme Bakery:", self.path.read_text(encoding="utf-8"))
+        shown = "\n".join(self.said)
+        self.assertIn("Saved to", shown)
+        self.assertIn("glasses stop, then glasses start", shown)
+
+    def test_an_unfilled_template_counts_as_no_profile(self):
+        self.path.write_text(profile_setup.TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
+        profile_setup.run(self.path, ask=self.answers(*self.FULL), say=self.said.append)
+        self.assertNotIn("<your name>", self.path.read_text(encoding="utf-8"))
+        self.assertFalse(self.path.with_name("persona.md.bak").exists())
+
+    def test_an_existing_profile_is_kept_edited_or_redone(self):
+        self.path.write_text("# mine\n- Name: Sam\n", encoding="utf-8")
+        profile_setup.run(self.path, ask=self.answers(""), say=self.said.append)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "# mine\n- Name: Sam\n")
+        opened = []
+        profile_setup.run(self.path, ask=self.answers("e"), say=self.said.append, open_in_notepad=opened.append)
+        self.assertEqual(opened, [self.path])
+        profile_setup.run(self.path, ask=self.answers("r", *self.FULL), say=self.said.append)
+        self.assertIn("- Acme Bakery:", self.path.read_text(encoding="utf-8"))
+        self.assertEqual(self.path.with_name("persona.md.bak").read_text(encoding="utf-8"), "# mine\n- Name: Sam\n")
 
 
 class LiveKitTest(unittest.TestCase):

@@ -105,14 +105,20 @@ Each key is checked as you save it. For email, make a new Google **app password*
 (myaccount.google.com/apppasswords); the old ones can't be shown again. Paste each into the prompt;
 nothing shows while you paste.
 
-**Your profile.** On the Mac, run `open -e ~/.claude-glasses-bridge/persona.md`, select everything,
-and copy it. Email it to yourself if you have no other way across. On the PC, run:
+**Your profile.** This is how the glasses know who you are and which businesses to follow in the news.
+Run:
 
 ```powershell
 glasses profile
 ```
 
-Notepad opens. Paste, save, close.
+It asks short questions: your name, what you do, your time zone, then for each business its name, what
+it does, its website and competitors or names to watch. Then news topics you care about, and any
+software projects. Press Enter to skip any question. When you ask "what's new" or "catch me up", it
+searches the web for each business, competitor and topic you listed. Run `glasses profile` again
+whenever something changes: it offers to keep the profile, edit it in Notepad (E), or redo the
+questions (R; the old one is saved as `persona.md.bak`). Restart afterwards with `glasses stop`, then
+`glasses start`.
 
 **Chrome control.** On the PC, open Chrome, install the **Claude** extension from the Chrome Web
 Store, and sign in. Then in PowerShell: `claude`, type `/chrome`, choose **Enabled by default**, then

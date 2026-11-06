@@ -109,10 +109,11 @@ def keyterms(persona: str) -> list[str]:
     """Names speech-to-text should expect: Claude, the user's projects, and
     anything listed in ~/.claude-glasses-bridge/keyterms.txt."""
     terms = ["Claude", "Claude Code"]
-    section = re.search(r"^## My projects\s*$(.*?)(?=^## |\Z)", persona, re.M | re.S)
-    if section:
-        for name in re.findall(r"^\s*-\s*\**([A-Z][\w .'-]{1,30}?)\**\s*:", section.group(1), re.M):
-            terms.append(name.strip())
+    for heading in ("My projects", "My businesses"):
+        section = re.search(rf"^## {heading}\s*$(.*?)(?=^## |\Z)", persona, re.M | re.S)
+        if section:
+            for name in re.findall(r"^\s*-\s*\**([A-Z][\w .'-]{1,30}?)\**\s*:", section.group(1), re.M):
+                terms.append(name.strip())
     try:
         extra = (DATA_DIR / "keyterms.txt").read_text(encoding="utf-8")
         terms += [line.strip() for line in extra.splitlines() if line.strip() and not line.startswith("#")]

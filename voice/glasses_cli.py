@@ -23,7 +23,7 @@ USAGE = """glasses: your Meta glasses assistant, on this PC
   glasses key NAME            save a key: ELEVEN_API_KEY (voice) or DEEPGRAM_API_KEY (hearing)
   glasses email add you@example.com | list | remove you@example.com
   glasses pick-voice          hear the voices and pick one
-  glasses profile             open your profile in Notepad
+  glasses profile             tell it who you are and about your businesses (it asks questions)
   glasses logs [voice|console|gateway] [lines]  the end of a log (console shows start-up errors)
   glasses autostart on|off    start by itself when you sign in to Windows
 """
@@ -150,14 +150,16 @@ def main(argv: list[str]) -> int:
             print("The login service is running, so restart it to use the new code: glasses stop, then glasses start")
         return 0
     if command == "profile":
-        path = launcher.data_dir / "persona.md"
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text((ROOT / "templates" / "business-partner.md").read_text(encoding="utf-8"), encoding="utf-8")
-        print(f"Opening {path}. Fill it in, save, and close it; then run: glasses stop, glasses start")
-        if os.name == "nt":
-            subprocess.Popen(["notepad", str(path)])
-        return 0
+        import datetime
+
+        from profile_setup import run as run_profile
+
+        def notepad(path: Path) -> None:
+            if os.name == "nt":
+                subprocess.Popen(["notepad", str(path)])
+
+        zone = datetime.datetime.now().astimezone().tzname() or ""
+        return run_profile(launcher.data_dir / "persona.md", open_in_notepad=notepad, zone=zone)
     if command == "logs":
         name = rest[0] if rest else "voice"
         count = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 40
