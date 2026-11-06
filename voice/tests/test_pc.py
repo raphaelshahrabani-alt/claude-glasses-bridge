@@ -354,6 +354,35 @@ class LauncherTest(unittest.TestCase):
         self.assertIn("didn't finish starting", text)
         self.assertIn("→ LiveKit refused the keys (error 401)", text)
 
+    def test_the_automatic_check_starts_what_is_missing_but_not_after_you_stopped_it(self):
+        launcher = self.launcher()
+        launcher.boot_time = lambda: time.time() - 3600  # Windows started an hour ago
+        self.assertEqual(launcher.start(self.proj, watch=True), 0)
+        self.assertEqual(len(self.started), 2)  # nothing was running, so both were started
+        self.assertEqual(self.said, [])  # and it is silent
+        launcher.stop()
+        self.assertTrue(launcher.stopped_flag.exists())
+        self.started.clear()
+        self.assertEqual(launcher.start(watch=True), 0)
+        self.assertEqual(self.started, [])  # you stopped it; the check leaves it alone
+        self.assertTrue(launcher.stopped_flag.exists())
+        launcher.start()  # you start it yourself: the flag goes
+        self.assertFalse(launcher.stopped_flag.exists())
+
+    def test_a_restart_of_windows_overrides_an_old_stop(self):
+        launcher = self.launcher()
+        launcher.stopped_flag.write_text("stopped on purpose\n")
+        os.utime(launcher.stopped_flag, (time.time() - 7200, time.time() - 7200))  # stopped two hours ago
+        launcher.boot_time = lambda: time.time() - 600  # Windows restarted ten minutes ago
+        self.assertFalse(launcher.stopped_on_purpose())
+        self.assertEqual(launcher.start(self.proj, watch=True), 0)
+        self.assertEqual(len(self.started), 2)
+        launcher.stopped_flag.write_text("again\n")
+        self.assertTrue(launcher.stopped_on_purpose())
+        launcher.boot_time = lambda: None  # not Windows: a stop always counts
+        os.utime(launcher.stopped_flag, (time.time() - 7200, time.time() - 7200))
+        self.assertTrue(launcher.stopped_on_purpose())
+
     def test_quiet_start_says_nothing_when_all_is_well(self):
         launcher = self.launcher()
         self.assertEqual(launcher.start(self.proj, quiet=True), 0)
@@ -958,22 +987,56 @@ class AccessCodeTest(unittest.TestCase):
 
 
 class CliTest(unittest.TestCase):
-    def test_autostart_writes_and_removes_the_startup_file(self):
+    def test_autostart_sets_up_a_check_every_few_minutes_and_stops_the_pc_sleeping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = os.environ.get("APPDATA")
+            os.environ["APPDATA"] = tmp
+            said, calls = [], []
+
+            def run(cmd, **kw):
+                calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+            try:
+                old = glasses_cli.startup_script()
+                old.parent.mkdir(parents=True)
+                old.write_text("old login script")  # an earlier version's way of starting
+                self.assertEqual(glasses_cli.autostart(True, said.append, windows=True, run=run), 0)
+                self.assertFalse(old.exists())
+                create = next(c for c in calls if c[:2] == ["schtasks", "/Create"])
+                self.assertEqual(create[create.index("/SC") + 1:create.index("/SC") + 4], ["MINUTE", "/MO", "5"])
+                command = create[create.index("/TR") + 1]
+                self.assertIn("glasses.py", command)
+                self.assertTrue(command.endswith("start --watch"))
+                self.assertIn("/F", create)
+                self.assertIn(["powercfg", "/change", "standby-timeout-ac", "0"], calls)
+                self.assertIn(["powercfg", "/change", "hibernate-timeout-ac", "0"], calls)
+                text = "\n".join(said)
+                self.assertIn("starts them if they aren't", text)
+                self.assertIn("never sleep while plugged in", text)
+                self.assertIn("netplwiz", text)
+                calls.clear()
+                self.assertEqual(glasses_cli.autostart(False, said.append, windows=True, run=run), 0)
+                self.assertEqual(calls, [["schtasks", "/Delete", "/TN", "Claude Glasses", "/F"]])
+                self.assertEqual(glasses_cli.autostart(True, said.append, windows=False, run=run), 1)
+            finally:
+                if real is None:
+                    os.environ.pop("APPDATA", None)
+                else:
+                    os.environ["APPDATA"] = real
+
+    def test_if_windows_refuses_the_check_it_still_starts_at_sign_in(self):
         with tempfile.TemporaryDirectory() as tmp:
             real = os.environ.get("APPDATA")
             os.environ["APPDATA"] = tmp
             said = []
             try:
-                self.assertEqual(glasses_cli.autostart(True, said.append, windows=True), 0)
+                refuse = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="ERROR: Access is denied.")
+                self.assertEqual(glasses_cli.autostart(True, said.append, windows=True, run=refuse), 0)
                 script = glasses_cli.startup_script()
-                self.assertTrue(str(script).endswith(os.path.join("Startup", "claude-glasses.cmd")))
-                text = script.read_text()
-                self.assertIn(f'"{sys.executable}"', text)
-                self.assertIn("glasses.py", text)
-                self.assertTrue(text.rstrip().endswith("start --quiet"))
-                self.assertEqual(glasses_cli.autostart(False, said.append, windows=True), 0)
-                self.assertFalse(script.exists())
-                self.assertEqual(glasses_cli.autostart(True, said.append, windows=False), 1)
+                self.assertTrue(script.read_text().rstrip().endswith("start --quiet"))
+                self.assertIn("Access is denied", "\n".join(said))
+                self.assertIn("won't come back by itself", "\n".join(said))
             finally:
                 if real is None:
                     os.environ.pop("APPDATA", None)

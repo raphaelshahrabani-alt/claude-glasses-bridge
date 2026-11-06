@@ -25,7 +25,7 @@ USAGE = """glasses: your Meta glasses assistant, on this PC
   glasses pick-voice          hear the voices and pick one
   glasses profile             tell it who you are and about your businesses (it asks questions)
   glasses logs [voice|console|gateway] [lines]  the end of a log (console shows start-up errors)
-  glasses autostart on|off    start by itself when you sign in to Windows
+  glasses autostart on|off    keep it always on: start at sign-in, restart it if it stops, never sleep
 """
 
 VENV_COMMANDS = {"email", "pick-voice"}  # these use the voice program's own Python (it has the password keychain)
@@ -44,20 +44,46 @@ def startup_script() -> Path:
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "claude-glasses.cmd"
 
 
-def autostart(on: bool, say=print, windows: bool | None = None) -> int:
+TASK_NAME = "Claude Glasses"
+WATCH_MINUTES = 5
+
+
+def background_python() -> str:
+    """pythonw.exe runs without a console window; fall back to the usual python."""
+    candidate = Path(sys.executable).with_name("pythonw.exe")
+    return str(candidate) if candidate.exists() else sys.executable
+
+
+def autostart(on: bool, say=print, windows: bool | None = None, run=subprocess.run) -> int:
+    """Always on: a check every few minutes, from when you sign in, that starts whatever isn't running."""
     if not (os.name == "nt" if windows is None else windows):
         say("Starting at login is set up for Windows only.")
         return 1
     path = startup_script()
+    path.unlink(missing_ok=True)  # an older version used a login script; the check below replaces it
     if not on:
-        path.unlink(missing_ok=True)
+        run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True)
         say("Won't start by itself any more.")
         return 0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'@echo off\r\nstart "" /min "{sys.executable}" "{ROOT / "glasses.py"}" start --quiet\r\n')
-    say(f"It will start by itself when you sign in to Windows ({path}).")
-    say("Tip: so that it also starts after a restart without you, turn on automatic sign-in")
-    say("(press Windows+R, type  netplwiz,  untick 'Users must enter a user name and password').")
+    command = f'"{background_python()}" "{ROOT / "glasses.py"}" start --watch'
+    made = run(["schtasks", "/Create", "/TN", TASK_NAME, "/TR", command, "/SC", "MINUTE", "/MO", str(WATCH_MINUTES), "/F"],
+               capture_output=True, text=True)
+    if made.returncode != 0:
+        # Without the scheduled check it still starts at sign-in, but nothing brings it back if it stops.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'@echo off\r\nstart "" /min "{sys.executable}" "{ROOT / "glasses.py"}" start --quiet\r\n')
+        say(f"Windows wouldn't set up the automatic check ({(made.stderr or made.stdout or '').strip()}).")
+        say(f"It will start when you sign in ({path}), but won't come back by itself if it stops.")
+    else:
+        say(f"Done. Every {WATCH_MINUTES} minutes while you're signed in, Windows checks that the glasses are running")
+        say("and starts them if they aren't (after a restart, a crash or a sign-in). `glasses stop` keeps it stopped")
+        say("until Windows restarts or you run `glasses start` again.")
+    # A PC that falls asleep can't answer calls. The screen may still turn off.
+    for setting in ("standby-timeout-ac", "hibernate-timeout-ac"):
+        run(["powercfg", "/change", setting, "0"], capture_output=True, text=True)
+    say("Also set: never sleep while plugged in (the screen can still turn off).")
+    say("To also come back after a restart with nobody there, turn on automatic sign-in:")
+    say("press Windows+R, type  netplwiz,  untick 'Users must enter a user name and password'.")
     return 0
 
 
@@ -111,9 +137,10 @@ def main(argv: list[str]) -> int:
 
         return setup(launcher)
     if command == "start":
-        quiet = "--quiet" in rest
-        folders = [str(Path(f).expanduser().resolve()) for f in rest if f != "--quiet"]
-        return launcher.start(folders[0] if folders else None, folders[1:] if folders else None, quiet=quiet)
+        quiet, watch = "--quiet" in rest, "--watch" in rest
+        folders = [str(Path(f).expanduser().resolve()) for f in rest if f not in ("--quiet", "--watch")]
+        return launcher.start(folders[0] if folders else None, folders[1:] if folders else None, quiet=quiet or watch,
+                              watch=watch)
     if command == "stop":
         return launcher.stop()
     if command == "status":

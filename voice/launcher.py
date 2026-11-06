@@ -98,6 +98,20 @@ def pid_alive(pid: int) -> bool:
         return True
 
 
+def system_boot_time() -> float | None:
+    """When Windows last started (seconds since 1970). None where that isn't known."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        function = ctypes.windll.kernel32.GetTickCount64  # type: ignore[attr-defined]
+        function.restype = ctypes.c_ulonglong
+        return time.time() - function() / 1000.0
+    except Exception:
+        return None
+
+
 def kill_tree(pid: int, wait_s: float = 8.0) -> None:
     """Ends a process and everything it started (npm starts node, for one)."""
     if os.name == "nt":
@@ -188,6 +202,21 @@ class Launcher:
     spawn: Callable[..., int] = staticmethod(spawn)
     port_open: Callable[[int], bool] = staticmethod(port_open)
     sleep: Callable[[float], None] = staticmethod(time.sleep)
+    boot_time: Callable[[], float | None] = staticmethod(system_boot_time)
+
+    @property
+    def stopped_flag(self) -> Path:
+        """Exists after a `glasses stop`, so the automatic check doesn't bring it back against your wishes."""
+        return self.data_dir / "stopped.flag"
+
+    def stopped_on_purpose(self) -> bool:
+        """True if you stopped it since Windows last started (a restart starts it again)."""
+        try:
+            stopped_at = self.stopped_flag.stat().st_mtime
+        except OSError:
+            return False
+        boot = self.boot_time()
+        return boot is None or stopped_at > boot
 
     @property
     def run_dir(self) -> Path:
@@ -222,8 +251,12 @@ class Launcher:
     # ---- commands -----------------------------------------------------
 
     def start(self, project: str | None = None, extra_dirs: list[str] | None = None, quiet: bool = False,
-              wait_s: float = 60.0) -> int:
-        say = (lambda _t: None) if quiet else self.say
+              wait_s: float = 60.0, watch: bool = False) -> int:
+        """watch=True is the automatic check: it starts what is missing, unless you stopped it on purpose."""
+        say = (lambda _t: None) if quiet or watch else self.say
+        if watch and self.stopped_on_purpose():
+            return 0
+        self.stopped_flag.unlink(missing_ok=True)
         problems = missing_setup(self.data_dir, self.visionclaw)
         if problems:
             for p in problems:
@@ -287,6 +320,8 @@ class Launcher:
         if self.port_open(GATEWAY_PORT) and "gateway" not in stopped:
             self.say("(something else is serving the login service port; it was not started by glasses start, so I left it)")
         self.say("Stopped: " + ", ".join(stopped) if stopped else "Nothing was running.")
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.stopped_flag.write_text("stopped on purpose\n")
         return 0
 
     def status(self) -> dict[str, dict | None]:

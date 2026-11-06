@@ -150,18 +150,32 @@ Tailscale: a free private network for your own devices. Nothing is opened to the
 5. In the **VisionClaw app**: set **Gateway URL** to the address from step 3 (it's on the login
    screen, or in Settings if you're already logged in), and log in with your access code.
 
-## Part 4: Keep it running
+## Part 4: Keep it always on
 
 ```powershell
 glasses autostart on
 ```
 
-- That starts everything when you sign in to Windows. To have it come back after a restart on its
-  own, turn on automatic sign-in: press **Windows + R**, type `netplwiz`, untick *Users must enter a
-  user name and password*, click OK.
-- Stop the PC sleeping: **Settings → System → Power → Screen and sleep**, and set *When plugged in,
-  put my device to sleep after* to **Never**. (The voice program also asks Windows to stay awake while
-  it runs.)
+That one command does three things:
+
+- **Checks every 5 minutes** (while you're signed in to Windows) that the login service and the voice
+  program are running, and starts whichever isn't. So it comes back after a sign-in, a restart or a
+  crash. `glasses stop` keeps it stopped until Windows restarts or you run `glasses start` again.
+- **Stops the PC sleeping** while it's plugged in (the screen can still turn off).
+- Tells you about automatic sign-in, which you do yourself: after a restart the PC has to be signed in
+  for it to run, because Claude Code uses your Windows login. Press **Windows + R**, type `netplwiz`,
+  untick *Users must enter a user name and password*, click OK, and enter your password when asked.
+  Do that only if the PC is somewhere private.
+
+Also worth doing:
+
+- Make Tailscale keep running: click the Tailscale icon near the clock, open its settings, and tick
+  **Run unattended**.
+- On a laptop, keep the lid from putting it to sleep: Control Panel → Power Options → *Choose what
+  closing the lid does* → **Do nothing** when plugged in.
+- Windows Update restarts the PC at night sometimes. With automatic sign-in on, everything comes back
+  by itself within a few minutes.
+- To undo it: `glasses autostart off`.
 - On the **Mac**, quit Terminal (⌘Q → Terminate). If both are running, each call goes to one of them at random, which is confusing.
 
 ## Part 5: Check it
