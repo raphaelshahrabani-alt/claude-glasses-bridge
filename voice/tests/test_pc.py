@@ -816,6 +816,18 @@ class ProfileTest(unittest.TestCase):
         for name in ("Acme Bakery", "Bright Tools", "Brightly"):
             self.assertIn(name, terms)  # speech recognition expects the business names
 
+    def test_names_come_from_project_headings_not_from_every_bullet(self):
+        import worker
+
+        text = ("## My projects\n\n### Acme: bakery software\n- Code: GitHub repo\n- What it is: members\n\n"
+                "### Globex (globex.example)\n- Market: Canada\n\n### Other things I am building\n- Locations: none\n\n### This setup\n- Code: x\n\n"
+                "## My businesses\n\n- Initech: a web agency.\n\n## Email\n- Draft: replies\n")
+        terms = worker.keyterms(text)
+        for name in ("Acme", "Globex", "Initech"):
+            self.assertIn(name, terms)
+        for junk in ("Code", "What it is", "Market", "Locations", "Other things I am building", "This setup", "Draft"):
+            self.assertNotIn(junk, terms)
+
     def test_skipping_everything_still_gives_a_usable_profile(self):
         text = profile_setup.interview(lambda prompt: "", self.said.append)
         self.assertIn("## My businesses", text)

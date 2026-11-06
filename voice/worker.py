@@ -111,7 +111,15 @@ def keyterms(persona: str) -> list[str]:
     terms = ["Claude", "Claude Code"]
     for heading in ("My projects", "My businesses"):
         section = re.search(rf"^## {heading}\s*$(.*?)(?=^## |\Z)", persona, re.M | re.S)
-        if section:
+        if not section:
+            continue
+        titles = re.findall(r"^###\s+(.+?)\s*$", section.group(1), re.M)
+        if titles:  # one "### Name: what it is" heading per project
+            for title in titles:
+                name = re.split(r"\s*[:(]", title, maxsplit=1)[0].strip()
+                if name and len(name.split()) <= 3 and name.split()[0].lower() not in ("this", "other", "my", "the"):
+                    terms.append(name)
+        else:  # one "- Name: what it is" line per project
             for name in re.findall(r"^\s*-\s*\**([A-Z][\w .'-]{1,30}?)\**\s*:", section.group(1), re.M):
                 terms.append(name.strip())
     try:
